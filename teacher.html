@@ -32,6 +32,31 @@
     details.p { border-top: 1px solid var(--line); padding: 10px 0; }
     details.p summary { cursor: pointer; font-weight: 600; }
     .pbody { font-family: "Times New Roman", Georgia, serif; white-space: pre-wrap; font-size: 16px; margin: 8px 0; }
+    /* word mastery */
+    :root { --lv-fading: var(--bad); --lv-due: #d4891c; --lv-fresh: var(--accent); --lv-solid: var(--good); --lv-mastered: #8a6cf0; }
+    .chips { display: flex; flex-wrap: wrap; gap: 8px; margin-bottom: 10px; }
+    .chip { font: inherit; font-size: 14px; border: 1.5px solid var(--line); background: var(--card); color: var(--text); border-radius: 99px; padding: 5px 12px; cursor: pointer; }
+    .chip.on { border-color: var(--text); font-weight: 700; }
+    .chip.lv-fading { border-left: 6px solid var(--lv-fading); } .chip.lv-due { border-left: 6px solid var(--lv-due); }
+    .chip.lv-fresh { border-left: 6px solid var(--lv-fresh); } .chip.lv-solid { border-left: 6px solid var(--lv-solid); }
+    .chip.lv-mastered { border-left: 6px solid var(--lv-mastered); }
+    .bar-fg.lv-fading { background: var(--lv-fading); } .bar-fg.lv-due { background: var(--lv-due); }
+    .bar-fg.lv-fresh { background: var(--lv-fresh); } .bar-fg.lv-solid { background: var(--lv-solid); }
+    .bar-fg.lv-mastered { background: var(--lv-mastered); }
+    .pill.lv-fading { background: var(--bad-soft); color: var(--lv-fading); } .pill.lv-due { color: var(--lv-due); }
+    .pill.lv-fresh { background: var(--accent-soft); color: var(--lv-fresh); } .pill.lv-solid { background: var(--good-soft); color: var(--lv-solid); }
+    .pill.lv-mastered { color: var(--lv-mastered); }
+    .pill { white-space: nowrap; }
+    #mastery td { white-space: nowrap; }
+    #mastery td.small { white-space: normal; min-width: 180px; }
+    #mastery .bar-bg { min-width: 70px; }
+    .forecast { padding: 14px 16px; }
+    .fc-row { display: grid; grid-template-columns: repeat(14, 1fr); gap: 6px; margin-top: 8px; }
+    .fc { text-align: center; font-size: 12px; }
+    .fc-bar { height: 60px; display: flex; align-items: flex-end; background: var(--bg); border-radius: 4px; overflow: hidden; }
+    .fc-bar div { width: 100%; background: var(--accent); }
+    .fc-n { font-weight: 700; min-height: 1.2em; }
+    .fc-d { color: var(--muted); }
   </style>
 </head>
 <body>
