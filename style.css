@@ -137,6 +137,18 @@ body.printing #app { display: none; }
   .no-print { display: none !important; }
   .print-sheet { padding: 0; }
 }
+/* per-option explanations after a word question */
+.explain { margin-top: 10px; padding: 14px 16px; font-size: 16px; }
+.explain .ex-head { font-size: 18px; margin-bottom: 8px; }
+.explain .root-line { color: var(--muted); margin-top: 2px; }
+.explain p { margin: 6px 0; }
+.why { list-style: none; padding: 0; margin: 0; display: grid; gap: 6px; }
+.why li { display: flex; gap: 8px; padding: 6px 8px; border-radius: 8px; }
+.why li .mk { flex: none; width: 1.2em; font-weight: 700; color: var(--muted); }
+.why li.o { background: var(--good-soft); }
+.why li.o .mk { color: var(--good); }
+.why li.x { background: var(--bad-soft); }
+.why li.x .mk { color: var(--bad); }
 /* passage analysis */
 .opt.pick { display: block; }
 .badge { display: inline-block; font-size: 12px; padding: 1px 8px; border-radius: 99px; background: var(--bad-soft); color: var(--bad); margin-left: 4px; }
