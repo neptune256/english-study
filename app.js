@@ -1,15 +1,15 @@
 import { db, today, addDays, REMOTE } from "./db.js";
-import { planDay, nextLevels } from "./planner.js";
+import { planDay, nextLevels, GRAMMAR } from "./planner.js";
 import { afterLearning, afterReview, reviewStage } from "./memory.js";
 
 const $app = document.getElementById("app");
 const DAY = new URLSearchParams(location.search).get("day") || today(); // ?day= for testing
 
 // Stages every new word goes through, in order (5 words per group). They move from
-// recognising the word to producing it: recall → match → hear → synonym → use in a sentence →
-// judge usage → passage → translate → write from sound. A wrong answer sends the word to the
-// back of that stage's queue, so a stage ends only when every word in the group is answered right.
-// After all groups, a mixed final check brings back all of today's words once more.
+// recognising the word to using it: recall → match → hear → synonym → use in a sentence →
+// judge usage → passage → translate. (No spelling: the goal is reading.) A wrong answer sends
+// the word to the back of that stage's queue, so a stage ends only when every word in the group
+// is answered right. After all groups, a mixed final check brings back all of today's words.
 const STAGES = [
   { key: "card", label: "익히기" },
   { key: "recall", label: "떠올리기" },
@@ -20,9 +20,8 @@ const STAGES = [
   { key: "usage", label: "쓰임 판단" },
   { key: "context", label: "지문 속 의미" },
   { key: "translate", label: "해석하기" },
-  { key: "dictation", label: "듣고 쓰기" },
 ];
-const FINAL_KINDS = ["dictation", "cloze", "usage"]; // harder, mixed retrieval for the final check
+const FINAL_KINDS = ["listen", "cloze", "usage"]; // mixed retrieval for the final check
 const GROUP = 5;
 const HAS_TTS = "speechSynthesis" in window;
 
@@ -112,7 +111,7 @@ function home() {
     <ol class="steps">
       ${step(1, "복습", s.review_ids.length ? `예전에 외운 단어 ${s.review_ids.length}개 확인` : "오늘은 복습할 단어가 없어요", !reviewsLeft, next === "review")}
       ${step(2, "단어 외우기", groupsLeft ? `새 단어 ${s.word_ids.length}개 · 남은 단어 ${groupsLeft}개 · 마지막에 최종 점검` : sum.finalDone || !s.word_ids.length ? `새 단어 ${s.word_ids.length}개 완료` : "최종 점검만 남았어요", !wordsLeft, next === "vocab")}
-      ${step(3, "독해", `지문 ${s.passage_ids.length}개 · 남은 지문 ${readLeft}개`, !readLeft, next === "reading")}
+      ${step(3, "독해 + 어법", `${readingSummary(s)} · 남은 문제 ${readLeft}개`, !readLeft, next === "reading")}
     </ol>
     ${
       next
@@ -122,10 +121,17 @@ function home() {
   tap("#go", () => (next === "review" ? review() : next === "vocab" ? vocab() : reading()));
 }
 
+const isGrammar = (id) => S.passageById[id]?.qtype === GRAMMAR;
+function readingSummary(s) {
+  const g = s.passage_ids.filter(isGrammar).length;
+  return `지문 ${s.passage_ids.length - g}개${g ? ` + 어법 ${g}문제` : ""}`;
+}
+
 function resultLine() {
   const r = S.set.summary.readingDone;
-  const c = r.filter((x) => x.correct).length;
-  return `<p>독해 ${c} / ${r.length} 정답</p><p class="muted small">내일 다시 만나요.</p>`;
+  const read = r.filter((x) => !isGrammar(x.id)), gram = r.filter((x) => isGrammar(x.id));
+  return `<p>독해 ${read.filter((x) => x.correct).length} / ${read.length} 정답${gram.length ? ` · 어법 ${gram[0].correct ? "정답" : "오답"}` : ""}</p>
+    <p class="muted small">내일 다시 만나요.</p>`;
 }
 
 // ───────────── review (old words) ─────────────
@@ -579,8 +585,9 @@ async function reading() {
   const ids = S.set.passage_ids.filter((id) => !sum.readingDone.find((r) => r.id === id));
   for (const id of ids) {
     const p = S.passageById[id];
-    const n = S.set.passage_ids.indexOf(id) + 1;
-    const results = await readPassage(p, `독해 ${n} / ${S.set.passage_ids.length}`);
+    const readIds = S.set.passage_ids.filter((x) => !isGrammar(x));
+    const label = isGrammar(id) ? "오늘의 어법" : `독해 ${readIds.indexOf(id) + 1} / ${readIds.length}`;
+    const results = await readPassage(p, label);
     for (const r of results) sum.readingDone.push(r);
     await saveSet();
   }
@@ -620,7 +627,9 @@ function readPassage(p, label) {
       ${qs.map((q, qi) => `
         <div class="card qblock" data-q="${qi}">
           ${qs.length > 1 ? `<div class="instr">${esc(q.stem || "")}</div>` : ""}
-          <div class="choices">${q.choices.map((c, i) => `<button class="opt choice" data-q="${qi}" data-i="${i + 1}"><span class="n">${CIRCLED[i]}</span>${esc(c)}</button>`).join("")}</div>
+          ${q.choices.every((c) => CIRCLED.includes(c.trim()))
+            ? `<div class="choices nums">${q.choices.map((c, i) => `<button class="opt choice num" data-q="${qi}" data-i="${i + 1}">${CIRCLED[i]}</button>`).join("")}</div>`
+            : `<div class="choices">${q.choices.map((c, i) => `<button class="opt choice" data-q="${qi}" data-i="${i + 1}"><span class="n">${CIRCLED[i]}</span>${esc(c)}</button>`).join("")}</div>`}
           <div class="fb-slot"></div>
         </div>`).join("")}
       <button class="btn primary big" id="submit" disabled>채점하기</button>
@@ -655,7 +664,8 @@ function readPassage(p, label) {
         });
         $app.querySelector(`.qblock[data-q="${qi}"] .fb-slot`).innerHTML = `
           <div class="fb ${ok ? "good" : "bad"}">${ok ? "정답!" : `오답 · 정답은 ${CIRCLED[q.answer - 1]}`}</div>
-          <details class="expl" ${ok ? "" : "open"}><summary>풀이 보기</summary><p>${esc(q.explanation)}</p></details>`;
+          ${q.point ? `<div class="point">어법 포인트 · <b>${esc(q.point)}</b></div>` : ""}
+          <details class="expl" ${ok && !q.point ? "" : "open"}><summary>풀이 보기</summary><p>${esc(q.explanation)}</p></details>`;
         results.push({ id: p.id, qnum: q.qnum, pick, answer: q.answer, correct: ok, ms });
         ev.push({ day: DAY, kind: "reading", passage_id: p.id, qnum: q.qnum, correct: ok, answer: String(pick), ms });
       });
@@ -673,8 +683,9 @@ async function finishDay() {
   const sum = S.set.summary;
   const evs = (await db.events()).filter((e) => e.day === DAY && e.kind === "drill" && e.first_try);
   const stats = {
-    readingCorrect: sum.readingDone.filter((r) => r.correct).length,
-    readingTotal: sum.readingDone.length,
+    // Passage level follows the reading passages only; grammar is tracked on its own.
+    readingCorrect: sum.readingDone.filter((r) => r.correct && !isGrammar(r.id)).length,
+    readingTotal: sum.readingDone.filter((r) => !isGrammar(r.id)).length,
     wordFirstTry: evs.filter((e) => e.correct).length,
     wordTotal: evs.length,
   };
