@@ -54,9 +54,13 @@ function render() {
   const due = D.progress.filter((p) => isDue(p, DAY)).length;
   const avgR = learned ? D.progress.filter((p) => p.learned_on).reduce((a, p) => a + recall(p, DAY), 0) / learned : 0;
 
+  const runout = addDays(DAY, daysLeft);
   $app.innerHTML = `
     <header class="top"><h1>학습 대시보드</h1><a href="index.html" class="muted small">학생 화면 →</a></header>
     ${REMOTE ? "" : `<p class="note">로컬 테스트 모드: 이 브라우저에 저장된 기록만 보입니다.</p>`}
+    ${daysLeft <= 5 ? `<div class="alert">⚠ 새 지문이 <b>약 ${daysLeft}일분</b> 남았습니다 (예상 소진 ${runout.slice(5).replace("-", "/")}).
+      컴퓨터를 켜고 Claude 앱을 열어 두면 저녁 8시 예약 작업이 자동으로 채웁니다.
+      바닥나도 앱은 멈추지 않고 예전에 틀린 지문을 다시 냅니다.</div>` : ""}
     <div class="kpis">
       <div class="kpi"><div class="v">${D.state.level}</div><div class="l">지문 난이도 수준 (1~5)</div></div>
       <div class="kpi"><div class="v">${D.state.word_level}</div><div class="l">단어 수준 (1~5)</div></div>
@@ -64,8 +68,10 @@ function render() {
       <div class="kpi"><div class="v">${learned}</div><div class="l">외운 단어 · 완전 암기 ${mastered}</div></div>
       <div class="kpi"><div class="v">${learned ? Math.round(avgR * 100) + "%" : "–"}</div><div class="l">외운 단어 평균 기억 확률</div></div>
       <div class="kpi"><div class="v">${due}</div><div class="l">오늘까지 복습할 단어</div></div>
-      <div class="kpi ${daysLeft < 7 ? "warn" : ""}"><div class="v">${poolLeft} · ${grammarLeft}</div><div class="l">남은 독해 지문 · 어법 문제 (약 ${daysLeft}일분)</div></div>
     </div>
+
+    <h2>지문 창고 <span class="muted small">아직 학생에게 내지 않은 지문 · 매일 독해 ${PASSAGES_PER_DAY}개 + 어법 1개씩 씁니다</span></h2>
+    ${stockSection(unused, poolLeft, grammarLeft, daysLeft, runout)}
 
     <h2>날짜별 기록</h2>
     ${dailyTable()}
@@ -92,6 +98,36 @@ function render() {
   bindMastery();
   $app.querySelectorAll(".open-pdf").forEach((b) => b.addEventListener("click", (e) => { e.stopPropagation(); openPdf(b); }));
   if (D.daily.length) showDay(D.daily[0].day);
+}
+
+function stockSection(unused, poolLeft, grammarLeft, daysLeft, runout) {
+  const reading = unused.filter((p) => p.qtype !== GRAMMAR);
+  const bands = [
+    { name: "쉬움 1~1.5", lo: 1, hi: 1.5 }, { name: "보통 2~2.5", lo: 2, hi: 2.5 },
+    { name: "어려움 3~3.5", lo: 3, hi: 3.5 }, { name: "최상 4~5", lo: 4, hi: 5 },
+  ].map((b) => ({ ...b, n: reading.filter((p) => p.difficulty >= b.lo && p.difficulty <= b.hi).length }));
+  const lvl = D.state.level;
+  const maxN = Math.max(1, ...bands.map((b) => b.n));
+  const types = {};
+  for (const p of reading) types[p.qtype] = (types[p.qtype] || 0) + 1;
+  const lastAdded = D.passages.map((p) => p.created_at).filter(Boolean).sort().pop();
+  const readDays = Math.floor(poolLeft / PASSAGES_PER_DAY);
+  return `<div class="stock">
+    <div class="kpi ${readDays <= 5 ? "warn" : ""}"><div class="v">${poolLeft}개</div><div class="l">남은 독해 지문 · ${readDays}일분</div></div>
+    <div class="kpi ${grammarLeft <= 5 ? "warn" : ""}"><div class="v">${grammarLeft}개</div><div class="l">남은 어법 문제 · ${grammarLeft}일분</div></div>
+    <div class="kpi ${daysLeft <= 5 ? "warn" : ""}"><div class="v">${runout.slice(5).replace("-", "/")}</div><div class="l">예상 소진일 (매일 공부할 때)</div></div>
+    <div class="kpi"><div class="v">${D.passages.length}개</div><div class="l">전체 보유${lastAdded ? ` · 최근 보충 ${new Date(lastAdded).toLocaleDateString("ko-KR", { timeZone: "Asia/Seoul" })}` : ""}</div></div>
+  </div>
+  <div class="two">
+    <div class="card"><div class="small muted">남은 독해 지문 난이도 (학생 수준 ${lvl} 구간 강조)</div>
+      ${bands.map((b) => `<div class="band ${lvl >= b.lo - 0.5 && lvl <= b.hi + 0.5 ? "here" : ""}">
+        <span class="bn">${b.name}</span>
+        <div class="bar-bg"><div class="bar-fg" style="width:${(100 * b.n) / maxN}%"></div></div><b>${b.n}</b></div>`).join("")}
+    </div>
+    <div class="card"><div class="small muted">남은 독해 지문 유형</div>
+      <div class="types">${Object.entries(types).sort((a, b) => b[1] - a[1]).map(([t, n]) => `<span class="pill">${esc(t)} ${n}</span>`).join("") || "<span class='muted'>없음</span>"}</div>
+    </div>
+  </div>`;
 }
 
 function submissionList() {
@@ -226,7 +262,7 @@ function dailyTable() {
     const st = d.summary.stats;
     return `<tr class="click" data-day="${d.day}">
       <td>${d.day}</td>
-      <td>${(d.summary.wordsDone || []).length}/${d.word_ids.length} · 첫 시도 ${pct(drill.filter((e) => e.correct).length, drill.length)}</td>
+      <td>${(d.summary.wordsDone || []).length}/${d.word_ids.length}${(d.summary.relearnIds || []).length ? ` <span class="tag-re">(다시 ${d.summary.relearnIds.length})</span>` : ""} · 첫 시도 ${pct(drill.filter((e) => e.correct).length, drill.length)}</td>
       <td>${rev.length ? `${rev.filter((e) => e.correct).length}/${rev.length}` : "–"}</td>
       <td>${d.passage_ids.map((id) => {
         const r = read.find((x) => x.id === id);
@@ -250,7 +286,8 @@ function showDay(day) {
     const w = D.wordById[id];
     const mine = ev.filter((e) => e.kind === "drill" && e.word_id === id);
     const wrongStages = mine.filter((e) => !e.correct).map((e) => stageKo(e.stage));
-    return `<tr><td><b>${esc(w?.word)}</b></td><td>${esc(w?.meaning)}</td>
+    const re = (d.summary.relearnIds || []).includes(id);
+    return `<tr><td><b>${esc(w?.word)}</b>${re ? `<span class="tag-re">다시 배우기</span>` : ""}</td><td>${esc(w?.meaning)}</td>
       <td>${mine.length ? (wrongStages.length ? `<span class="x">${wrongStages.length}회</span> <span class="small muted">${[...new Set(wrongStages)].join(", ")}</span>` : `<span class="o">0</span>`) : "미학습"}</td></tr>`;
   });
   const read = d.summary.readingDone || [];
