@@ -1,5 +1,6 @@
 import { db, today, addDays, REMOTE } from "./db.js";
-import { planDay, nextLevels, afterReview, REVIEW_GAP } from "./planner.js";
+import { planDay, nextLevels } from "./planner.js";
+import { afterLearning, afterReview, reviewStage } from "./memory.js";
 
 const $app = document.getElementById("app");
 const DAY = new URLSearchParams(location.search).get("day") || today(); // ?day= for testing
@@ -124,14 +125,15 @@ async function review() {
   const queue = shuffle(S.set.review_ids.filter((id) => !sum.reviewsDone.includes(id)));
   for (let i = 0; i < queue.length; i++) {
     const w = S.wordById[queue[i]];
-    const kind = ["meaning", "cloze", "spell"][Math.floor(Math.random() * 3)];
+    const row = S.progressById[w.id];
+    const kind = reviewStage(row);
     const t0 = Date.now();
     const ok = await ask(kind, w, `복습 ${i + 1} / ${queue.length}`, S.words);
-    const row = S.progressById[w.id];
-    const next = afterReview(row, ok, DAY);
+    const ms = S.lastMs ?? Date.now() - t0;
+    const next = afterReview(row, ok, ms, kind, DAY);
     S.progressById[w.id] = next;
     await db.saveProgress([next]);
-    await db.logEvents([{ day: DAY, kind: "review", stage: kind, word_id: w.id, correct: ok, ms: Date.now() - t0 }]);
+    await db.logEvents([{ day: DAY, kind: "review", stage: kind, word_id: w.id, correct: ok, ms }]);
     if (!ok) await card(w, "다시 익히기", true);
     sum.reviewsDone.push(w.id);
     await saveSet();
@@ -148,6 +150,7 @@ async function vocab() {
     const group = left.slice(g, g + GROUP);
     const groupNo = Math.floor((todays.length - left.length + g) / GROUP) + 1;
     const groups = Math.ceil(todays.length / GROUP);
+    const attempts = Object.fromEntries(group.map((w) => [w.id, []])); // per-word answers, for the memory model
     for (const st of STAGES) {
       let queue = shuffle(group);
       const tried = new Set();
@@ -162,18 +165,16 @@ async function vocab() {
         }
         const t0 = Date.now();
         const ok = await ask(st.key, w, label, todays);
-        await db.logEvents([{
-          day: DAY, kind: "drill", stage: st.key, word_id: w.id, correct: ok, first_try: !tried.has(w.id), ms: Date.now() - t0,
-        }]);
+        const ev = { day: DAY, kind: "drill", stage: st.key, word_id: w.id, correct: ok, first_try: !tried.has(w.id), ms: S.lastMs ?? Date.now() - t0 };
+        attempts[w.id].push(ev);
+        await db.logEvents([ev]);
         tried.add(w.id);
         if (ok) done++;
         else queue.push(w);
       }
     }
-    // Group finished: these words are now learned and enter the review schedule.
-    const rows = group.map((w) => ({
-      word_id: w.id, box: 1, learned_on: DAY, next_review: addDays(DAY, REVIEW_GAP[1]), correct: 0, wrong: 0,
-    }));
+    // Group finished: these words are now learned; how well the drills went sets the first review date.
+    const rows = group.map((w) => afterLearning(w.id, attempts[w.id], DAY));
     rows.forEach((r) => (S.progressById[r.word_id] = r));
     await db.saveProgress(rows);
     sum.wordsDone.push(...group.map((w) => w.id));
@@ -227,6 +228,9 @@ function contextRaw(w) {
 /** One quiz item. Resolves true/false. */
 function ask(kind, w, label, pool) {
   window.__quiz = { kind, id: w.id, word: w.word }; // test hook for automated walkthroughs
+  const shown = Date.now();
+  S.lastMs = null;
+  const answered = () => (S.lastMs = Date.now() - shown); // answer time, without feedback time
   return new Promise((resolve) => {
     let prompt = "", options = [], answer = "", mode = "choice";
     const ex0 = w.examples[0], ex1 = w.examples[1] || w.examples[0];
@@ -260,6 +264,7 @@ function ask(kind, w, label, pool) {
         <div class="options">${options.map((o, i) => `<button class="opt" data-v="${esc(o.v)}"><span class="n">${i + 1}</span>${esc(o.t)}</button>`).join("")}</div>
         <div id="fb"></div>`);
       tap(".opt", async (el) => {
+        answered();
         const ok = el.dataset.v === answer;
         $app.querySelectorAll(".opt").forEach((b) => {
           b.disabled = true;
@@ -284,6 +289,7 @@ function ask(kind, w, label, pool) {
           <button class="btn bad" id="no">틀렸어요</button>
         </div>`);
       tap("#reveal", (el) => {
+        answered(); // time to come up with a translation
         el.classList.add("hidden");
         $app.querySelector("#ko").classList.remove("hidden");
         $app.querySelector("#judge").classList.remove("hidden");
@@ -314,6 +320,7 @@ function ask(kind, w, label, pool) {
         e.preventDefault();
         const v = input.value.trim().toLowerCase();
         if (!v) return;
+        answered();
         const ok = v === w.word.toLowerCase() || v === surf.toLowerCase();
         input.disabled = true;
         speak(w.word);
