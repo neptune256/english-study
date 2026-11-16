@@ -55,7 +55,9 @@ h1 { font-size: 28px; }
 .note { background: var(--accent-soft); border-radius: 10px; padding: 8px 12px; font-size: 15px; }
 
 .top { display: flex; justify-content: space-between; align-items: baseline; margin-bottom: 16px; }
-.bar { display: flex; justify-content: space-between; color: var(--muted); font-size: 15px; margin-bottom: 10px; }
+.bar { display: flex; align-items: center; gap: 10px; color: var(--muted); font-size: 15px; margin-bottom: 10px; }
+.bar > span:first-of-type { margin-right: auto; }
+.bar .exit { flex: none; font: inherit; font-size: 13px; color: var(--muted); background: var(--card); border: 1px solid var(--line); border-radius: 99px; padding: 4px 10px; cursor: pointer; }
 
 .card { background: var(--card); border: 1px solid var(--line); border-radius: var(--radius); padding: 20px; margin-bottom: 14px; }
 
