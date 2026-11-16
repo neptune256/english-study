@@ -1,5 +1,9 @@
-import { db, today, REMOTE } from "./db.js";
+import { db, today, addDays, REMOTE } from "./db.js";
 import { typeStats, PASSAGES_PER_DAY } from "./planner.js";
+import { recall, masteryLabel, isDue, MASTERED_DAYS } from "./memory.js";
+
+const DAY = new URLSearchParams(location.search).get("day") || today(); // ?day= to preview another date
+let filter = "all";
 
 const $app = document.getElementById("app");
 const esc = (s) =>
@@ -39,9 +43,10 @@ function render() {
   const used = new Set(D.daily.flatMap((d) => d.passage_ids));
   const poolLeft = D.passages.filter((p) => !used.has(p.id)).length;
   const daysLeft = Math.floor(poolLeft / PASSAGES_PER_DAY);
-  const learned = D.progress.filter((p) => p.box >= 1).length;
-  const mastered = D.progress.filter((p) => p.box >= 5).length;
-  const due = D.progress.filter((p) => p.box >= 1 && p.box <= 4 && p.next_review && p.next_review <= today()).length;
+  const learned = D.progress.filter((p) => p.learned_on).length;
+  const mastered = D.progress.filter((p) => (p.stability ?? 0) >= MASTERED_DAYS).length;
+  const due = D.progress.filter((p) => isDue(p, DAY)).length;
+  const avgR = learned ? D.progress.filter((p) => p.learned_on).reduce((a, p) => a + recall(p, DAY), 0) / learned : 0;
 
   $app.innerHTML = `
     <header class="top"><h1>학습 대시보드</h1><a href="index.html" class="muted small">학생 화면 →</a></header>
@@ -51,6 +56,7 @@ function render() {
       <div class="kpi"><div class="v">${D.state.word_level}</div><div class="l">단어 수준 (1~5)</div></div>
       <div class="kpi"><div class="v">${streak()}일</div><div class="l">연속 학습</div></div>
       <div class="kpi"><div class="v">${learned}</div><div class="l">외운 단어 · 완전 암기 ${mastered}</div></div>
+      <div class="kpi"><div class="v">${learned ? Math.round(avgR * 100) + "%" : "–"}</div><div class="l">외운 단어 평균 기억 확률</div></div>
       <div class="kpi"><div class="v">${due}</div><div class="l">오늘까지 복습할 단어</div></div>
       <div class="kpi ${daysLeft < 7 ? "warn" : ""}"><div class="v">${poolLeft}</div><div class="l">남은 지문 (약 ${daysLeft}일분)</div></div>
     </div>
@@ -59,10 +65,10 @@ function render() {
     ${dailyTable()}
     <div id="detail"></div>
 
-    <div class="two">
-      <div><h2>자주 틀리는 단어</h2>${weakWords()}</div>
-      <div><h2>유형별 정답률</h2>${typeTable()}</div>
-    </div>
+    <h2>단어 숙지도 <span class="muted small">기억 확률 = 지금 물어보면 맞힐 확률 추정치. 90% 아래로 떨어지는 날이 복습일입니다.</span></h2>
+    <div id="mastery">${masterySection()}</div>
+
+    <h2>유형별 정답률</h2>${typeTable()}
 
     <h2>지문·정답·풀이 <span class="muted small">(정답은 Claude가 직접 풀어 만든 것입니다. 검증 전 지문은 표시됩니다)</span></h2>
     ${bank()}`;
@@ -74,7 +80,88 @@ function render() {
       showDay(tr.dataset.day);
     })
   );
+  bindMastery();
   if (D.daily.length) showDay(D.daily[0].day);
+}
+
+// ───────────── word mastery ─────────────
+const LABEL_ORDER = ["fading", "due", "fresh", "solid", "mastered"];
+const LABEL_TEXT = { fading: "잊는 중", due: "복습 필요", fresh: "익히는 중", solid: "탄탄", mastered: "완전 암기" };
+
+function wordRows() {
+  const wrongBy = {}, msBy = {};
+  for (const e of D.events) {
+    if (!e.word_id) continue;
+    if (!e.correct) wrongBy[e.word_id] = (wrongBy[e.word_id] || 0) + 1;
+    if (e.kind === "drill" && e.first_try && e.ms) (msBy[e.word_id] ||= []).push(e.ms);
+  }
+  return D.progress
+    .filter((p) => p.learned_on)
+    .map((p) => {
+      const ms = msBy[p.word_id] || [];
+      return {
+        p, w: D.wordById[p.word_id], R: recall(p, DAY), label: masteryLabel(p, DAY),
+        wrong: wrongBy[p.word_id] || 0, avgMs: ms.length ? ms.reduce((a, b) => a + b, 0) / ms.length : null,
+      };
+    })
+    .sort((a, b) => a.R - b.R);
+}
+
+function masterySection() {
+  const rows = wordRows();
+  if (!rows.length) return `<div class="card muted">아직 외운 단어가 없습니다.</div>`;
+  const count = Object.fromEntries(LABEL_ORDER.map((k) => [k, rows.filter((r) => r.label.key === k).length]));
+  // Reviews coming up over the next 14 days.
+  const ahead = Array.from({ length: 14 }, (_, i) => {
+    const d = addDays(DAY, i);
+    const n = D.progress.filter((p) => p.next_review && (i === 0 ? p.next_review <= d : p.next_review === d)).length;
+    return { d, n };
+  });
+  const maxN = Math.max(1, ...ahead.map((a) => a.n));
+  const shown = filter === "all" ? rows : rows.filter((r) => r.label.key === filter);
+  const dday = (d) => {
+    if (!d) return "더 안 봄";
+    const n = Math.round((new Date(d) - new Date(DAY)) / 86400000);
+    return n <= 0 ? `<b class="x">오늘</b>` : `${d.slice(5)} (D-${n})`;
+  };
+  return `
+    <div class="chips">
+      <button class="chip ${filter === "all" ? "on" : ""}" data-f="all">전체 ${rows.length}</button>
+      ${LABEL_ORDER.map((k) => `<button class="chip lv-${k} ${filter === k ? "on" : ""}" data-f="${k}">${LABEL_TEXT[k]} ${count[k]}</button>`).join("")}
+    </div>
+    <div class="card forecast">
+      <div class="small muted">앞으로 14일 복습 예정 단어 수</div>
+      <div class="fc-row">${ahead.map((a, i) => `
+        <div class="fc" title="${a.d}: ${a.n}개">
+          <div class="fc-bar"><div style="height:${(100 * a.n) / maxN}%"></div></div>
+          <div class="fc-n">${a.n || ""}</div><div class="fc-d">${i === 0 ? "오늘" : a.d.slice(8)}</div>
+        </div>`).join("")}</div>
+    </div>
+    <div class="tbl-wrap"><table>
+      <tr><th>단어</th><th>뜻</th><th>기억 확률</th><th>상태</th><th>기억 지속</th><th>첫날 퀴즈</th><th>평균 응답</th><th>복습 · 실수</th><th>다음 복습</th></tr>
+      ${shown.map(({ p, w, R, label, wrong, avgMs }) => `<tr>
+        <td><b>${esc(w?.word || p.word_id)}</b></td>
+        <td class="small">${esc(w?.meaning)}</td>
+        <td><div class="bar-cell"><div class="bar-bg"><div class="bar-fg lv-${label.key}" style="width:${Math.round(R * 100)}%"></div></div>${Math.round(R * 100)}%</div></td>
+        <td><span class="pill lv-${label.key}">${label.text}</span></td>
+        <td>${p.stability != null ? (p.stability < 1 ? "1일 미만" : Math.round(p.stability) + "일") : "–"}</td>
+        <td>${p.drill_score != null ? Math.round(p.drill_score * 100) + "점" : "–"}</td>
+        <td>${avgMs ? (avgMs / 1000).toFixed(1) + "초" : "–"}</td>
+        <td>${p.reps || 0}회 · <span class="${p.lapses ? "x" : ""}">${p.lapses || 0}</span> <span class="small muted">(오답 ${wrong})</span></td>
+        <td>${dday(p.next_review)}</td>
+      </tr>`).join("")}
+    </table></div>
+    <p class="small muted">기억 지속 = 마지막 복습 후 기억 확률이 90%로 떨어지기까지 걸리는 일수. 첫날 퀴즈 = 처음 외운 날 7단계 퀴즈를 첫 시도에 맞힌 정도(어려운 단계·빠른 응답일수록 높음). 복습에서 맞히면 기억 지속이 늘고, 틀리면 30%로 줄어듭니다.</p>`;
+}
+
+function bindMastery() {
+  $app.querySelectorAll("#mastery .chip").forEach((b) =>
+    b.addEventListener("click", () => {
+      filter = b.dataset.f;
+      $app.querySelector("#mastery").innerHTML = masterySection();
+      bindMastery();
+    })
+  );
 }
 
 function dailyTable() {
@@ -139,19 +226,6 @@ function passageView(p, q) {
     <div class="pbody">${esc(p.body.replace(/\{\/?u\}/g, ""))}</div>
     <ol class="small">${q.choices.map((c, i) => `<li ${i + 1 === q.answer ? 'class="o"' : ""}>${esc(c)}</li>`).join("")}</ol>
     <p class="small"><b>풀이</b> ${esc(q.explanation)}</p>`;
-}
-
-function weakWords() {
-  const wrong = {};
-  for (const e of D.events) if ((e.kind === "drill" || e.kind === "review") && !e.correct) wrong[e.word_id] = (wrong[e.word_id] || 0) + 1;
-  const top = Object.entries(wrong).sort((a, b) => b[1] - a[1]).slice(0, 15);
-  if (!top.length) return `<div class="card muted">아직 없습니다.</div>`;
-  return `<div class="tbl-wrap"><table><tr><th>단어</th><th>뜻</th><th>오답</th><th>복습 단계</th></tr>
-    ${top.map(([id, n]) => {
-      const w = D.wordById[id];
-      const pr = D.progress.find((p) => p.word_id === id);
-      return `<tr><td><b>${esc(w?.word)}</b></td><td>${esc(w?.meaning)}</td><td>${n}</td><td>${pr ? (pr.box >= 5 ? "완전 암기" : `${pr.box}단계 · 다음 ${pr.next_review || "–"}`) : "–"}</td></tr>`;
-    }).join("")}</table></div>`;
 }
 
 function typeTable() {
