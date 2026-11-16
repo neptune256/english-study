@@ -1,7 +1,9 @@
 // Data layer: Supabase REST when configured, otherwise localStorage + local content bundle.
 
 const cfg = window.APP_CONFIG || {};
-export const REMOTE = Boolean(cfg.SUPABASE_URL && cfg.SUPABASE_ANON_KEY);
+// ?local=1 forces the local test mode even when Supabase is configured (safe testing).
+export const REMOTE =
+  Boolean(cfg.SUPABASE_URL && cfg.SUPABASE_ANON_KEY) && !new URLSearchParams(location.search).has("local");
 
 // Today in Korea, as YYYY-MM-DD.
 export function today() {
