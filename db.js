@@ -112,4 +112,41 @@ export const db = {
   async events() {
     return REMOTE ? rest("GET", "events?select=*&order=at") : lsGet("events", []);
   },
+
+  // ───── passage analysis PDFs (Supabase Storage bucket "analysis") ─────
+  /** Upload a PDF and record it. In local test mode only the record is kept. */
+  async submitAnalysis({ day, passageId, file }) {
+    const path = `${day}/${passageId}-${Date.now()}.pdf`;
+    const row = { day, passage_id: passageId, path, file_name: file.name, size: file.size };
+    if (REMOTE) {
+      const res = await fetch(`${cfg.SUPABASE_URL}/storage/v1/object/analysis/${path}`, {
+        method: "POST",
+        headers: {
+          apikey: cfg.SUPABASE_ANON_KEY,
+          Authorization: `Bearer ${cfg.SUPABASE_ANON_KEY}`,
+          "Content-Type": "application/pdf",
+        },
+        body: file,
+      });
+      if (!res.ok) throw new Error(`업로드 실패 (${res.status}) ${await res.text()}`);
+      await rest("POST", "submissions", [row], "return=minimal");
+    } else {
+      const all = lsGet("submissions", []);
+      all.push({ id: all.length + 1, submitted_at: new Date().toISOString(), ...row });
+      lsSet("submissions", all);
+    }
+    return row;
+  },
+  async submissions() {
+    return REMOTE ? rest("GET", "submissions?select=*&order=submitted_at.desc") : lsGet("submissions", []).reverse();
+  },
+  /** The PDF as a Blob (null in local test mode). */
+  async analysisFile(path) {
+    if (!REMOTE) return null;
+    const res = await fetch(`${cfg.SUPABASE_URL}/storage/v1/object/analysis/${path}`, {
+      headers: { apikey: cfg.SUPABASE_ANON_KEY, Authorization: `Bearer ${cfg.SUPABASE_ANON_KEY}` },
+    });
+    if (!res.ok) throw new Error(`파일을 열 수 없어요 (${res.status})`);
+    return res.blob();
+  },
 };
