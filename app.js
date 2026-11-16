@@ -55,6 +55,8 @@ function speak(text) {
   }
 }
 const screen = (html) => {
+  // Every study screen gets a "저장하고 나가기" button in its top bar.
+  html = html.replace('<div class="bar">', '<div class="bar"><button class="exit" onclick="saveAndExit()">← 저장하고 나가기</button>');
   $app.innerHTML = html;
   window.scrollTo(0, 0);
 };
@@ -89,7 +91,20 @@ async function load() {
   home();
 }
 
-const saveSet = () => db.saveDaily(S.set);
+// Saves run one after another (never out of order) and don't hold up the next question.
+let saving = Promise.resolve();
+const saveSet = () => {
+  const snapshot = JSON.parse(JSON.stringify(S.set));
+  saving = saving.then(() => db.saveDaily(snapshot)).catch((e) => console.error("save failed", e));
+  return saving;
+};
+
+/** "저장하고 나가기": wait for pending saves, then back to the home screen. */
+window.saveAndExit = async () => {
+  try { speechSynthesis.cancel(); } catch { /* no speech */ }
+  await saving;
+  location.reload();
+};
 
 // ───────────── home ─────────────
 function home() {
@@ -117,7 +132,8 @@ function home() {
     </ol>
     ${
       next
-        ? `<button class="btn primary big" id="go">${sum.wordsDone.length || sum.reviewsDone.length ? "이어서 하기" : "시작하기"}</button>`
+        ? `<button class="btn primary big" id="go">${sum.wordsDone.length || sum.reviewsDone.length || sum.vocabPos || sum.finalPos || sum.readingDone.length ? "이어서 하기" : "시작하기"}</button>
+           ${resumeNote(sum)}`
         : `<div class="card center"><h2>오늘 학습 완료!</h2>${resultLine()}</div>`
     }`);
   tap("#go", () => (next === "review" ? review() : next === "vocab" ? vocab() : next === "reading" ? reading() : analysis()));
@@ -238,6 +254,16 @@ function printPassage(p) {
   });
 }
 
+/** Where an interrupted session will pick up. */
+function resumeNote(sum) {
+  if (sum.finalPos) return `<p class="muted small center">최종 점검 ${sum.finalPos.done + 1}/${S.set.word_ids.length}부터 이어서 해요.</p>`;
+  const p = sum.vocabPos;
+  if (!p) return "";
+  const st = STAGES.find((s) => s.key === p.stage);
+  const groupNo = Math.floor(sum.wordsDone.length / GROUP) + 1;
+  return `<p class="muted small center">${groupNo}묶음 · ${st?.label || ""} ${p.done + 1}/${p.groupIds.length}부터 이어서 해요.</p>`;
+}
+
 const isGrammar = (id) => S.passageById[id]?.qtype === GRAMMAR;
 const isRelearn = (id) => (S.set.summary.relearnIds || []).includes(id);
 function wordMix(s) {
@@ -290,49 +316,66 @@ async function review() {
 async function vocab() {
   const sum = S.set.summary;
   const todays = S.set.word_ids.map((id) => S.wordById[id]);
-  const left = todays.filter((w) => !sum.wordsDone.includes(w.id));
-  for (let g = 0; g < left.length; g += GROUP) {
-    const group = left.slice(g, g + GROUP);
-    const groupNo = Math.floor((todays.length - left.length + g) / GROUP) + 1;
-    const groups = Math.ceil(todays.length / GROUP);
-    const attempts = Object.fromEntries(group.map((w) => [w.id, []])); // per-word answers, for the memory model
-    for (const st of STAGES) {
+  const groups = Math.ceil(todays.length / GROUP);
+  for (;;) {
+    const left = todays.filter((w) => !sum.wordsDone.includes(w.id));
+    if (!left.length) break;
+    // Auto-save: sum.vocabPos remembers the group, stage and question order after every answer,
+    // so leaving mid-group and coming back continues from the same question.
+    let pos = sum.vocabPos;
+    const posOk = pos && pos.groupIds.every((id) => left.some((w) => w.id === id)) && STAGES.some((s) => s.key === pos.stage);
+    if (!posOk) pos = null;
+    const group = pos ? pos.groupIds.map((id) => S.wordById[id]) : left.slice(0, GROUP);
+    const groupNo = Math.floor((todays.length - left.length) / GROUP) + 1;
+    const startStage = pos ? STAGES.findIndex((s) => s.key === pos.stage) : 0;
+    for (let si = startStage; si < STAGES.length; si++) {
+      const st = STAGES[si];
+      const resuming = pos && si === startStage;
+      const save = (queue, tried, done) => {
+        sum.vocabPos = { groupIds: group.map((w) => w.id), stage: st.key, queue: queue.map((w) => w.id), tried: [...tried], done };
+        return saveSet();
+      };
       if (st.key === "match") {
-        // One game for the whole group: tap a word, then its meaning.
+        // One game for the whole group: tap a word, then its meaning. (Restarts if left midway.)
+        save(group, new Set(), 0);
         const res = await match(group, `${groupNo}/${groups}묶음 · ${st.label}`);
-        const evs = group.map((w) => ({
+        await db.logEvents(group.map((w) => ({
           day: DAY, kind: "drill", stage: "match", word_id: w.id, correct: !res[w.id].mistakes, first_try: true, ms: res[w.id].ms,
-        }));
-        evs.forEach((ev) => attempts[ev.word_id].push(ev));
-        await db.logEvents(evs);
+        })));
         continue;
       }
-      let queue = shuffle(group);
-      const tried = new Set();
-      let done = 0;
+      const queue = resuming ? pos.queue.map((id) => S.wordById[id]).filter(Boolean) : shuffle(group);
+      const tried = new Set(resuming ? pos.tried : []);
+      let done = resuming ? pos.done : 0;
+      if (!resuming) save(queue, tried, done);
       while (queue.length) {
-        const w = queue.shift();
+        const w = queue[0]; // stays first until answered, so a resumed session asks it again
         const label = `${groupNo}/${groups}묶음 · ${st.label} · ${done + 1}/${group.length}`;
         if (st.key === "card") {
           await card(w, label);
+          queue.shift();
           done++;
+          save(queue, tried, done);
           continue;
         }
         const t0 = Date.now();
         const ok = await ask(st.key, w, label, todays);
-        const ev = { day: DAY, kind: "drill", stage: st.key, word_id: w.id, correct: ok, first_try: !tried.has(w.id), ms: S.lastMs ?? Date.now() - t0 };
-        attempts[w.id].push(ev);
-        await db.logEvents([ev]);
+        await db.logEvents([{ day: DAY, kind: "drill", stage: st.key, word_id: w.id, correct: ok, first_try: !tried.has(w.id), ms: S.lastMs ?? Date.now() - t0 }]);
+        queue.shift();
         tried.add(w.id);
         if (ok) done++;
         else queue.push(w);
+        save(queue, tried, done);
       }
     }
-    // Group finished: these words are now learned; how well the drills went sets the first review date.
-    const rows = group.map((w) => learnedRow(w, attempts[w.id]));
+    // Group finished: these words are now learned. The memory model uses all of today's answers
+    // for them (also those from before a break), so the first review date is right.
+    const todayDrills = (await db.events(DAY)).filter((e) => e.kind === "drill");
+    const rows = group.map((w) => learnedRow(w, todayDrills.filter((e) => e.word_id === w.id)));
     rows.forEach((r) => (S.progressById[r.word_id] = r));
     await db.saveProgress(rows);
     sum.wordsDone.push(...group.map((w) => w.id));
+    sum.vocabPos = null;
     await saveSet();
   }
   if (!sum.finalDone && todays.length) await finalCheck(todays);
@@ -347,22 +390,39 @@ async function vocab() {
  */
 async function finalCheck(todays) {
   const sum = S.set.summary;
-  await intro("최종 점검", `오늘 외운 ${todays.length}단어를 섞어서 한 번 더 확인해요.<br>틀린 단어는 맞힐 때까지 다시 나와요.`);
-  let queue = shuffle(todays).map((w, i) => ({ w, kind: FINAL_KINDS[i % FINAL_KINDS.length] }));
-  const tried = new Set();
-  let done = 0;
+  // Auto-save: sum.finalPos keeps the remaining questions after every answer.
+  const pos = sum.finalPos;
+  let queue, tried, done;
+  if (pos && pos.queue.every((q) => S.wordById[q.id])) {
+    queue = pos.queue.map((q) => ({ w: S.wordById[q.id], kind: q.kind }));
+    tried = new Set(pos.tried);
+    done = pos.done;
+  } else {
+    await intro("최종 점검", `오늘 외운 ${todays.length}단어를 섞어서 한 번 더 확인해요.<br>틀린 단어는 맞힐 때까지 다시 나와요.`);
+    queue = shuffle(todays).map((w, i) => ({ w, kind: FINAL_KINDS[i % FINAL_KINDS.length] }));
+    tried = new Set();
+    done = 0;
+  }
+  const save = () => {
+    sum.finalPos = { queue: queue.map((q) => ({ id: q.w.id, kind: q.kind })), tried: [...tried], done };
+    return saveSet();
+  };
+  save();
   while (queue.length) {
-    const { w, kind } = queue.shift();
+    const { w, kind } = queue[0];
     const t0 = Date.now();
     const ok = await ask(kind, w, `최종 점검 · ${done + 1}/${todays.length}`, todays);
     await db.logEvents([{
       day: DAY, kind: "drill", stage: `final:${kind}`, word_id: w.id, correct: ok, first_try: !tried.has(w.id), ms: S.lastMs ?? Date.now() - t0,
     }]);
+    queue.shift();
     tried.add(w.id);
     if (ok) done++;
     else queue.push({ w, kind: FINAL_KINDS[(FINAL_KINDS.indexOf(kind) + 1) % FINAL_KINDS.length] });
+    save();
   }
-  const todayDrills = (await db.events()).filter((e) => e.day === DAY && e.kind === "drill");
+  sum.finalPos = null;
+  const todayDrills = (await db.events(DAY)).filter((e) => e.kind === "drill");
   const rows = todays.map((w) => learnedRow(w, todayDrills.filter((e) => e.word_id === w.id)));
   rows.forEach((r) => (S.progressById[r.word_id] = r));
   await db.saveProgress(rows);
@@ -811,7 +871,7 @@ function readPassage(p, label) {
 
 async function finishDay() {
   const sum = S.set.summary;
-  const evs = (await db.events()).filter((e) => e.day === DAY && e.kind === "drill" && e.first_try);
+  const evs = (await db.events(DAY)).filter((e) => e.kind === "drill" && e.first_try);
   const stats = {
     // Passage level follows the reading passages only; grammar is tracked on its own.
     readingCorrect: sum.readingDone.filter((r) => r.correct && !isGrammar(r.id)).length,
