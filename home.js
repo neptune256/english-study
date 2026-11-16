@@ -1,6 +1,7 @@
 // 첫 화면: 영어 / 수학 고르기. 오늘 상태를 한 줄씩 보여 줍니다 (불러오기 실패해도 버튼은 그대로 동작).
 import { db, today, REMOTE } from "./db.js";
-import { mdb, isDue } from "./math-data.js";
+import { mdb } from "./math-data.js";
+import { streak } from "./math-plan.js";
 
 const DAY = new URLSearchParams(location.search).get("day") || today(); // ?day= for testing
 const $ = (id) => document.getElementById(id);
@@ -22,14 +23,12 @@ db.daily(DAY).then((set) => {
   show("st-english", "진행 중 · 이어서 하기", "todo");
 }).catch(() => {});
 
-Promise.all([mdb.review(), mdb.sessions()]).then(([review, sessions]) => {
-  const due = review.filter((r) => isDue(r, DAY)).length;
-  const draft = sessions.find((s) => s.mode === "exam" && !s.finished_at);
-  const solvedToday = sessions.some((s) => s.day === DAY && s.finished_at);
-  const parts = [];
-  if (draft) parts.push("푸는 중인 모의고사 있음");
-  if (due) parts.push(`다시 풀 오답 ${due}개`);
-  if (parts.length) show("st-math", parts.join(" · "), "todo");
-  else if (solvedToday) show("st-math", "오늘 풀었어요 ✓", "done");
-  else show("st-math", "다시 풀 오답 없음");
+mdb.sessions().then((sessions) => {
+  const daily = sessions.find((s) => s.id === `${DAY}-daily`);
+  const n = streak(sessions, DAY);
+  const fire = n ? ` · 🔥 ${n}일 연속` : "";
+  if (daily?.finished_at) return show("st-math", `오늘의 5문제 완료 ✓${fire}`, "done");
+  const d = daily?.draft;
+  const done = d ? d.ids.filter((id) => d.done?.[id]).length : 0;
+  show("st-math", `오늘의 5문제 ${done}/${d ? d.ids.length : 5}${fire}`, "todo");
 }).catch(() => {});
