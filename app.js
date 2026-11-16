@@ -122,7 +122,7 @@ function home() {
   const analysisLeft = s.passage_ids.some((id) => !isGrammar(id)) && !sum.analysis ? 1 : 0;
   const next = reviewsLeft ? "review" : wordsLeft ? "vocab" : readLeft ? "reading" : analysisLeft ? "analysis" : null;
   screen(`
-    <header class="top"><h1>오늘의 영어</h1><span class="muted">${DAY}</span></header>
+    <header class="top"><h1>오늘의 영어</h1><span class="muted">${DAY} · <a href="index.html${location.search}">과목 선택</a></span></header>
     ${REMOTE ? "" : `<p class="note">로컬 테스트 모드입니다. 기록은 이 기기에만 저장됩니다.</p>`}
     <ol class="steps">
       ${step(1, "복습", s.review_ids.length ? `예전에 외운 단어 ${s.review_ids.length}개 확인` : "오늘은 복습할 단어가 없어요", !reviewsLeft, next === "review")}
