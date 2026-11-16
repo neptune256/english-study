@@ -17,10 +17,19 @@ export const TARGET_R = 0.9; // review when recall chance would fall below 90%
 export const MASTERED_DAYS = 90; // stability at which a word counts as fully learned
 export const RETIRE_DAYS = 180; // stop scheduling checks beyond this
 
-// Harder recall tasks tell us more about the memory.
-export const STAGE_WEIGHT = { meaning: 1, word: 1.5, cloze: 2, context: 1.5, translate: 1.5, spell: 2.5 };
+// Harder recall tasks tell us more about the memory. Self-graded recall and the matching game
+// weigh least; producing the word (writing from sound) and the delayed, mixed final check most.
+export const STAGE_WEIGHT = {
+  recall: 1, match: 1, meaning: 1, word: 1.5, listen: 1.5, synonym: 1.5, usage: 1.5,
+  cloze: 2, context: 1.5, translate: 1.5, spell: 2.5, dictation: 2.5,
+};
+const FINAL_WEIGHT = 3; // stage "final:<kind>"
 // Answers slower than this count as shaky.
-export const SLOW_MS = { meaning: 8000, word: 8000, cloze: 12000, context: 12000, translate: 20000, spell: 20000 };
+export const SLOW_MS = {
+  recall: 10000, match: 10000, meaning: 8000, word: 8000, listen: 8000, synonym: 10000, usage: 12000,
+  cloze: 12000, context: 12000, translate: 20000, spell: 20000, dictation: 20000,
+};
+const baseStage = (stage) => (stage || "").replace(/^final:/, "");
 
 const clamp = (x, lo, hi) => Math.min(hi, Math.max(lo, x));
 const daysBetween = (a, b) => Math.round((new Date(b + "T00:00:00Z") - new Date(a + "T00:00:00Z")) / 86400000);
@@ -28,15 +37,16 @@ const daysBetween = (a, b) => Math.round((new Date(b + "T00:00:00Z") - new Date(
 /** Score one answer: right & quick = 1, right & slow = 0.7, wrong = 0. */
 export function answerScore(stage, correct, ms) {
   if (!correct) return 0;
-  return ms && ms > (SLOW_MS[stage] ?? 10000) ? 0.7 : 1;
+  return ms && ms > (SLOW_MS[baseStage(stage)] ?? 10000) ? 0.7 : 1;
 }
 
 /** Drill score q (0–1) from the first-try answers of one word on its learning day. */
 export function drillScore(attempts) {
   let num = 0, den = 0;
   for (const a of attempts) {
-    if (!a.first_try || !(a.stage in STAGE_WEIGHT)) continue;
-    const w = STAGE_WEIGHT[a.stage];
+    const base = baseStage(a.stage);
+    if (!a.first_try || !(base in STAGE_WEIGHT)) continue;
+    const w = a.stage.startsWith("final:") ? FINAL_WEIGHT : STAGE_WEIGHT[base];
     num += w * answerScore(a.stage, a.correct, a.ms);
     den += w;
   }
@@ -95,10 +105,10 @@ export function afterReview(row, correct, ms, stage, day) {
   };
 }
 
-/** Which question to use for a review: recognition for young memories, recall for older ones. */
+/** Which question to use for a review: recognition for young memories, production for older ones. */
 export function reviewStage(row) {
   const S = row.stability ?? 1;
-  const pool = S < 7 ? ["meaning", "cloze"] : S < 30 ? ["cloze", "spell"] : ["spell"];
+  const pool = S < 7 ? ["listen", "cloze", "usage"] : S < 30 ? ["cloze", "usage", "dictation"] : ["dictation", "spell"];
   return pool[Math.floor(Math.random() * pool.length)];
 }
 
