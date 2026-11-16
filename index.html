@@ -5,12 +5,42 @@
   <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover" />
   <meta name="apple-mobile-web-app-capable" content="yes" />
   <meta name="robots" content="noindex" />
-  <title>오늘의 영어</title>
+  <title>오늘의 공부</title>
   <link rel="stylesheet" href="style.css" />
+  <style>
+    .pick { display: grid; gap: 14px; margin-top: 8px; }
+    .subject { display: flex; align-items: center; gap: 16px; background: var(--card); color: var(--text); text-decoration: none;
+      border: 1.5px solid var(--line); border-radius: var(--radius); padding: 22px 20px; min-height: 120px; }
+    .subject:hover, .subject:focus-visible { border-color: var(--accent); outline: none; }
+    .subject .mark { width: 64px; height: 64px; border-radius: 16px; display: grid; place-items: center; flex: none;
+      font-size: 30px; font-weight: 800; background: var(--accent-soft); color: var(--accent); }
+    .subject.math .mark { background: var(--good-soft); color: var(--good); }
+    .subject .name { font-size: 24px; font-weight: 800; }
+    .subject .what { color: var(--muted); font-size: 15px; }
+    .subject .status { font-size: 15px; margin-top: 4px; min-height: 1.5em; }
+    .subject .status.done { color: var(--good); font-weight: 700; }
+    .subject .status.todo { color: var(--accent); font-weight: 700; }
+    .subject .go { margin-left: auto; font-size: 26px; color: var(--muted); }
+  </style>
 </head>
 <body>
-  <main id="app"></main>
+  <main id="app">
+    <header class="top"><h1>오늘의 공부</h1><span class="muted" id="day"></span></header>
+    <p class="note hidden" id="local">로컬 테스트 모드입니다. 기록은 이 기기에만 저장됩니다.</p>
+    <div class="pick">
+      <a class="subject" id="go-english" href="english.html">
+        <span class="mark">A</span>
+        <span><div class="name">영어</div><div class="what">복습 → 단어 → 독해 → 지문 분석</div><div class="status" id="st-english"></div></span>
+        <span class="go">›</span>
+      </a>
+      <a class="subject math" id="go-math" href="math.html">
+        <span class="mark">∑</span>
+        <span><div class="name">수학</div><div class="what">평가원 기출 · 실전 / 단원 연습 / 오답 복습</div><div class="status" id="st-math"></div></span>
+        <span class="go">›</span>
+      </a>
+    </div>
+  </main>
   <script src="config.js"></script>
-  <script type="module" src="app.js"></script>
+  <script type="module" src="home.js"></script>
 </body>
 </html>
