@@ -1,5 +1,5 @@
 // Picks each day's passages and words from the student's record, and adjusts the levels.
-import { isDue, recall } from "./memory.js";
+import { isDue, recall, MASTERED_DAYS } from "./memory.js";
 import { addDays } from "./db.js";
 
 export const WORDS_PER_DAY = 20;
@@ -100,18 +100,30 @@ export function planDay({ day, state, passages, words, progress, events, usedPas
         const prev = cand.get(w.id);
         if (!prev || prev.importance < w.importance) cand.set(w.id, w);
       }
-  const wordIds = [...cand.values()]
+  // Relearn: up to 8 older words the student is losing go through the full drill again.
+  const relearnIds = pickRelearn({ day, progress, events, wordById });
+  const newIds = [...cand.values()]
     .sort(
       (a, b) =>
         b.importance - a.importance ||
         Math.abs(wordById[a.id].level - state.word_level) - Math.abs(wordById[b.id].level - state.word_level)
     )
-    .slice(0, WORDS_PER_DAY)
+    .slice(0, WORDS_PER_DAY - relearnIds.length)
     .map((w) => w.id);
+  // Spread relearn words evenly between new ones so every group of 5 gets some.
+  const wordIds = [];
+  const total = newIds.length + relearnIds.length;
+  const step = relearnIds.length ? total / relearnIds.length : Infinity;
+  let r = 0, n = 0;
+  while (wordIds.length < total) {
+    const relearnTurn = r < relearnIds.length && (n >= newIds.length || Math.floor((r + 0.5) * step) <= wordIds.length);
+    wordIds.push(relearnTurn ? relearnIds[r++] : newIds[n++]);
+  }
 
-  // Due words, weakest memory first.
+  // Due words, weakest memory first (relearn words are covered by the full drill instead).
+  const relearnSet = new Set(relearnIds);
   const reviewIds = progress
-    .filter((p) => isDue(p, day))
+    .filter((p) => isDue(p, day) && !relearnSet.has(p.word_id))
     .sort((a, b) => recall(a, day) - recall(b, day))
     .map((p) => p.word_id);
 
@@ -122,8 +134,40 @@ export function planDay({ day, state, passages, words, progress, events, usedPas
     review_ids: reviewIds,
     level_at_start: state.level,
     word_level_at_start: state.word_level,
-    summary: { wordsDone: [], reviewsDone: [], readingDone: [] },
+    summary: { wordsDone: [], reviewsDone: [], readingDone: [], relearnIds },
   };
+}
+
+export const RELEARN_MAX = 8;
+
+/**
+ * Older words to study again in full today, most in need first:
+ *   last review answered wrong  > many lapses > low recall chance today > low first-day drill score.
+ * Only words that show a need (wrong recently, lapsed before, recall under 85%, or a weak first day)
+ * qualify. Words practised in the last 2 days are skipped unless their last check was wrong,
+ * and mastered words never come back here.
+ */
+export function pickRelearn({ day, progress, events, wordById }) {
+  const lastReview = {};
+  for (const e of events)
+    if (e.kind === "review" && e.word_id && (!lastReview[e.word_id] || lastReview[e.word_id].day <= e.day))
+      lastReview[e.word_id] = e;
+  const twoDaysAgo = addDays(day, -2);
+  return progress
+    .filter((p) => p.learned_on && p.learned_on < day && wordById[p.word_id] && (p.stability ?? 0) < MASTERED_DAYS)
+    .map((p) => {
+      const R = recall(p, day);
+      const lastWrong = lastReview[p.word_id]?.correct === false;
+      const q = p.drill_score ?? 0.7;
+      const need = lastWrong || (p.lapses || 0) > 0 || R < 0.85 || q < 0.7;
+      const recent = (p.last_review || p.learned_on) > twoDaysAgo;
+      const score = (lastWrong ? 3 : 0) + Math.min(2, (p.lapses || 0) * 0.5) + (1 - R) * 4 + (1 - q) * 1.5;
+      return { id: p.word_id, ok: need && (!recent || lastWrong), score };
+    })
+    .filter((x) => x.ok)
+    .sort((a, b) => b.score - a.score)
+    .slice(0, RELEARN_MAX)
+    .map((x) => x.id);
 }
 
 /**
