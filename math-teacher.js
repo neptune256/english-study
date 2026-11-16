@@ -1,5 +1,6 @@
 // 수학 학습 대시보드 (선생님용): 실전 점수, 단원별·배점별 정답률, 오답 복습 현황.
 import { mdb, today, REMOTE, isDue, UNITS, SUBJECTS, showAnswer, GRADUATED, EXAM_MINUTES } from "./math-data.js";
+import { currentLevel, streak, tier, TIER_NAME } from "./math-plan.js";
 
 const DAY = new URLSearchParams(location.search).get("day") || today();
 const $app = document.getElementById("app");
@@ -46,8 +47,9 @@ function render() {
     <header class="top"><h1>수학 대시보드</h1><span class="small"><a href="teacher.html${location.search}" class="muted">영어 대시보드 →</a> · <a href="index.html" class="muted">학생 화면 →</a></span></header>
     ${REMOTE ? "" : `<p class="note">로컬 테스트 모드: 이 브라우저에 저장된 기록만 보입니다.</p>`}
     <div class="kpis">
-      <div class="kpi"><div class="v">${last ? last.score + "점" : "–"}</div><div class="l">최근 실전${last ? ` · ${esc(D.examById[last.exam]?.label)}` : ""}</div></div>
-      <div class="kpi"><div class="v">${exams.length}회</div><div class="l">실전 모의고사</div></div>
+      <div class="kpi"><div class="v">${streak(D.sessions, DAY)}일</div><div class="l">오늘의 5문제 연속</div></div>
+      <div class="kpi"><div class="v">Lv ${currentLevel(D.sessions)}</div><div class="l">문제 수준 (1 기초 ~ 5 킬러)</div></div>
+      <div class="kpi"><div class="v">${last ? last.score + "점" : "–"}</div><div class="l">최근 모의고사${last ? ` · ${esc(D.examById[last.exam]?.label)}` : ""}</div></div>
       <div class="kpi"><div class="v">${D.first.size}<small class="muted">/${D.problems.length}</small></div><div class="l">풀어 본 기출 문항</div></div>
       <div class="kpi"><div class="v">${pct(right, firsts.length)}</div><div class="l">첫 시도 정답률</div></div>
       <div class="kpi ${due.length > 15 ? "warn" : ""}"><div class="v">${due.length}</div><div class="l">오늘까지 다시 풀 오답 · 대기 ${waiting.length}</div></div>
@@ -55,7 +57,10 @@ function render() {
       <div class="kpi"><div class="v">${days.size}일</div><div class="l">수학을 푼 날</div></div>
     </div>
 
-    <h2>실전 모의고사 기록 <span class="muted small">${EXAM_MINUTES}분 기준 · 줄을 누르면 문항별 결과</span></h2>
+    <h2>오늘의 5문제 기록 <span class="muted small">줄을 누르면 문제 · ✓ 맞힘 ✗ 틀림 · 빨간 글씨는 오답 복습 문제</span></h2>
+    ${dailyTable()}
+
+    <h2>모의고사 기록 <span class="muted small">${EXAM_MINUTES}분 기준 · 줄을 누르면 문항별 결과</span></h2>
     ${examTable(exams)}
     <div id="exam-detail"></div>
 
@@ -75,7 +80,30 @@ function render() {
     tr.classList.add("sel");
     examDetail(D.sessions.find((s) => s.id === tr.dataset.session));
   }));
-  $app.querySelectorAll("tr[data-pid]").forEach((tr) => tr.addEventListener("click", () => peek(D.byId[tr.dataset.pid])));
+  $app.querySelectorAll("tr[data-pid], .click-p").forEach((el) => el.addEventListener("click", () => peek(D.byId[el.dataset.pid])));
+}
+
+function dailyTable() {
+  const days = D.sessions.filter((s) => s.mode === "daily").sort((a, b) => b.day.localeCompare(a.day)).slice(0, 21);
+  if (!days.length) return `<p class="muted">아직 기록이 없어요.</p>`;
+  const rows = days.map((s) => {
+    const d = s.draft || {};
+    const ids = [...(d.ids || []), ...(d.bonus || [])];
+    const done = (d.ids || []).filter((id) => d.done?.[id]).length;
+    const ok = ids.filter((id) => d.done?.[id]?.correct).length;
+    const items = ids.map((id) => {
+      const p = D.byId[id];
+      if (!p) return "";
+      const r = d.done?.[id];
+      const mark = r ? (r.correct ? `<span class="o">✓</span>` : `<span class="x">✗</span>`) : `<span class="muted">·</span>`;
+      const re = (d.review_ids || []).includes(id);
+      return `<span class="click-p" data-pid="${p.id}" style="cursor:pointer;white-space:nowrap${re ? ";color:var(--bad)" : ""}">${mark} ${esc(p.unit_name)}(${TIER_NAME[tier(p)]})</span>`;
+    });
+    const lvTxt = d.level_after != null && d.level_after !== d.level ? `${d.level} → ${d.level_after}` : `${d.level ?? "–"}`;
+    return `<tr><td>${md(s.day)}</td><td>${s.finished_at ? "완료" : `${done}/${(d.ids || []).length}`}</td><td>${ok}/${ids.length}</td>
+      <td>${lvTxt}</td><td>${mmss(s.ms)}</td><td class="small">${items.join(" · ")}</td></tr>`;
+  });
+  return `<div class="tbl-wrap"><table><tr><th>날짜</th><th>진행</th><th>맞힘</th><th>수준</th><th>시간</th><th>문제</th></tr>${rows.join("")}</table></div>`;
 }
 
 function examTable(exams) {
