@@ -5,18 +5,26 @@ import { afterLearning, afterReview, reviewStage } from "./memory.js";
 const $app = document.getElementById("app");
 const DAY = new URLSearchParams(location.search).get("day") || today(); // ?day= for testing
 
-// Stages every new word goes through, in order. A wrong answer sends the word to the back
-// of that stage's queue, so a stage ends only when every word in the group is answered right.
+// Stages every new word goes through, in order (5 words per group). They move from
+// recognising the word to producing it: recall → match → hear → synonym → use in a sentence →
+// judge usage → passage → translate → write from sound. A wrong answer sends the word to the
+// back of that stage's queue, so a stage ends only when every word in the group is answered right.
+// After all groups, a mixed final check brings back all of today's words once more.
 const STAGES = [
   { key: "card", label: "익히기" },
-  { key: "meaning", label: "뜻 고르기" },
-  { key: "word", label: "단어 고르기" },
+  { key: "recall", label: "떠올리기" },
+  { key: "match", label: "짝 맞추기" },
+  { key: "listen", label: "듣고 뜻 고르기" },
+  { key: "synonym", label: "유의어 고르기" },
   { key: "cloze", label: "빈칸 채우기" },
+  { key: "usage", label: "쓰임 판단" },
   { key: "context", label: "지문 속 의미" },
   { key: "translate", label: "해석하기" },
-  { key: "spell", label: "철자 쓰기" },
+  { key: "dictation", label: "듣고 쓰기" },
 ];
+const FINAL_KINDS = ["dictation", "cloze", "usage"]; // harder, mixed retrieval for the final check
 const GROUP = 5;
+const HAS_TTS = "speechSynthesis" in window;
 
 let S = {}; // loaded data: words, passages, set, progress, state
 
@@ -89,7 +97,8 @@ function home() {
   const s = S.set;
   const sum = s.summary;
   const reviewsLeft = s.review_ids.filter((id) => !sum.reviewsDone.includes(id)).length;
-  const wordsLeft = s.word_ids.filter((id) => !sum.wordsDone.includes(id)).length;
+  const groupsLeft = s.word_ids.filter((id) => !sum.wordsDone.includes(id)).length;
+  const wordsLeft = groupsLeft || (s.word_ids.length && !sum.finalDone ? 1 : 0); // final check still to do
   const readLeft = s.passage_ids.filter((id) => !sum.readingDone.find((r) => r.id === id)).length;
   const step = (n, title, detail, done, active) => `
     <li class="step ${done ? "done" : ""} ${active ? "active" : ""}">
@@ -102,7 +111,7 @@ function home() {
     ${REMOTE ? "" : `<p class="note">로컬 테스트 모드입니다. 기록은 이 기기에만 저장됩니다.</p>`}
     <ol class="steps">
       ${step(1, "복습", s.review_ids.length ? `예전에 외운 단어 ${s.review_ids.length}개 확인` : "오늘은 복습할 단어가 없어요", !reviewsLeft, next === "review")}
-      ${step(2, "단어 외우기", `새 단어 ${s.word_ids.length}개 · 남은 단어 ${wordsLeft}개`, !wordsLeft, next === "vocab")}
+      ${step(2, "단어 외우기", groupsLeft ? `새 단어 ${s.word_ids.length}개 · 남은 단어 ${groupsLeft}개 · 마지막에 최종 점검` : sum.finalDone || !s.word_ids.length ? `새 단어 ${s.word_ids.length}개 완료` : "최종 점검만 남았어요", !wordsLeft, next === "vocab")}
       ${step(3, "독해", `지문 ${s.passage_ids.length}개 · 남은 지문 ${readLeft}개`, !readLeft, next === "reading")}
     </ol>
     ${
@@ -152,6 +161,16 @@ async function vocab() {
     const groups = Math.ceil(todays.length / GROUP);
     const attempts = Object.fromEntries(group.map((w) => [w.id, []])); // per-word answers, for the memory model
     for (const st of STAGES) {
+      if (st.key === "match") {
+        // One game for the whole group: tap a word, then its meaning.
+        const res = await match(group, `${groupNo}/${groups}묶음 · ${st.label}`);
+        const evs = group.map((w) => ({
+          day: DAY, kind: "drill", stage: "match", word_id: w.id, correct: !res[w.id].mistakes, first_try: true, ms: res[w.id].ms,
+        }));
+        evs.forEach((ev) => attempts[ev.word_id].push(ev));
+        await db.logEvents(evs);
+        continue;
+      }
       let queue = shuffle(group);
       const tried = new Set();
       let done = 0;
@@ -178,10 +197,100 @@ async function vocab() {
     rows.forEach((r) => (S.progressById[r.word_id] = r));
     await db.saveProgress(rows);
     sum.wordsDone.push(...group.map((w) => w.id));
-    if (sum.wordsDone.length >= S.set.word_ids.length) S.set.vocab_done_at = new Date().toISOString();
     await saveSet();
   }
+  if (!sum.finalDone && todays.length) await finalCheck(todays);
   home();
+}
+
+/**
+ * Final check: all of today's words once more, shuffled together and in harder forms.
+ * Coming back to a word after working on the others is what makes the memory stick.
+ * Wrong answers come back at the end until right. Then every word's memory is recomputed
+ * from all of today's answers (the final check counts most).
+ */
+async function finalCheck(todays) {
+  const sum = S.set.summary;
+  await intro("최종 점검", `오늘 외운 ${todays.length}단어를 섞어서 한 번 더 확인해요.<br>틀린 단어는 맞힐 때까지 다시 나와요.`);
+  let queue = shuffle(todays).map((w, i) => ({ w, kind: FINAL_KINDS[i % FINAL_KINDS.length] }));
+  const tried = new Set();
+  let done = 0;
+  while (queue.length) {
+    const { w, kind } = queue.shift();
+    const t0 = Date.now();
+    const ok = await ask(kind, w, `최종 점검 · ${done + 1}/${todays.length}`, todays);
+    await db.logEvents([{
+      day: DAY, kind: "drill", stage: `final:${kind}`, word_id: w.id, correct: ok, first_try: !tried.has(w.id), ms: S.lastMs ?? Date.now() - t0,
+    }]);
+    tried.add(w.id);
+    if (ok) done++;
+    else queue.push({ w, kind: FINAL_KINDS[(FINAL_KINDS.indexOf(kind) + 1) % FINAL_KINDS.length] });
+  }
+  const todayDrills = (await db.events()).filter((e) => e.day === DAY && e.kind === "drill");
+  const rows = todays.map((w) => afterLearning(w.id, todayDrills.filter((e) => e.word_id === w.id), DAY));
+  rows.forEach((r) => (S.progressById[r.word_id] = r));
+  await db.saveProgress(rows);
+  sum.finalDone = true;
+  S.set.vocab_done_at = new Date().toISOString();
+  await saveSet();
+}
+
+function intro(title, text) {
+  return new Promise((resolve) => {
+    screen(`<div class="card center intro"><h2>${title}</h2><p>${text}</p></div>
+      <button class="btn primary big" id="ok">시작</button>`);
+    tap("#ok", () => resolve());
+  });
+}
+
+/**
+ * Matching game for one group: words on the left, meanings on the right.
+ * Returns {wordId: {mistakes, ms}} — ms is the time from the previous match to this one.
+ */
+function match(group, label) {
+  window.__quiz = { kind: "match", ids: group.map((w) => w.id) };
+  return new Promise((resolve) => {
+    const res = Object.fromEntries(group.map((w) => [w.id, { mistakes: 0, ms: 0 }]));
+    const left = shuffle(group), right = shuffle(group);
+    let pick = null, last = Date.now(), matched = 0;
+    screen(`
+      <div class="bar"><span>${label}</span><span class="muted small" id="timer">0초</span></div>
+      <p class="muted small center">단어를 누르고, 알맞은 뜻을 누르세요</p>
+      <div class="match">
+        <div class="col">${left.map((w) => `<button class="tile word-tile" data-id="${esc(w.id)}">${esc(w.word)}</button>`).join("")}</div>
+        <div class="col">${right.map((w) => `<button class="tile mean-tile" data-id="${esc(w.id)}">${esc(w.meaning)}</button>`).join("")}</div>
+      </div>`);
+    const start = Date.now();
+    const timer = setInterval(() => {
+      const el = $app.querySelector("#timer");
+      if (el) el.textContent = `${Math.floor((Date.now() - start) / 1000)}초`;
+    }, 500);
+    tap(".word-tile", (el) => {
+      if (el.disabled) return;
+      $app.querySelectorAll(".word-tile").forEach((b) => b.classList.remove("picked"));
+      el.classList.add("picked");
+      pick = el.dataset.id;
+      speak(S.wordById[pick].word);
+    });
+    tap(".mean-tile", (el) => {
+      if (el.disabled || !pick) return;
+      const wordEl = $app.querySelector(`.word-tile[data-id="${CSS.escape(pick)}"]`);
+      if (el.dataset.id === pick) {
+        res[pick].ms = Date.now() - last;
+        last = Date.now();
+        [el, wordEl].forEach((b) => { b.disabled = true; b.classList.remove("picked"); b.classList.add("right"); });
+        pick = null;
+        if (++matched === group.length) {
+          clearInterval(timer);
+          wait(500).then(() => resolve(res));
+        }
+      } else {
+        res[pick].mistakes++;
+        [el, wordEl].forEach((b) => b.classList.add("shake"));
+        setTimeout(() => [el, wordEl].forEach((b) => b.classList.remove("shake")), 400);
+      }
+    });
+  });
 }
 
 /** Study card. Resolves when the student taps "외웠어요". */
@@ -197,6 +306,7 @@ function card(w, label, isReview = false) {
         </div>
         <div class="pos">${esc(w.pos)}</div>
         <div class="meaning">${esc(w.meaning)}</div>
+        ${w.root ? `<div class="root"><span class="tag">어원·연상</span> ${esc(w.root)}</div>` : ""}
         ${w.extra ? `<div class="muted small">${esc(w.extra)}</div>` : ""}
         ${w.synonyms?.length ? `<div class="small">비슷한 말: ${w.synonyms.map(esc).join(", ")}</div>` : ""}
         ${ctx ? `<div class="ex ctx"><div class="tag">오늘 지문</div>${ctx}</div>` : ""}
@@ -232,9 +342,38 @@ function ask(kind, w, label, pool) {
   S.lastMs = null;
   const answered = () => (S.lastMs = Date.now() - shown); // answer time, without feedback time
   return new Promise((resolve) => {
-    let prompt = "", options = [], answer = "", mode = "choice";
+    let prompt = "", options = [], answer = "", mode = "choice", onShow = null;
     const ex0 = w.examples[0], ex1 = w.examples[1] || w.examples[0];
-    if (kind === "meaning" || (kind === "context" && !contextRaw(w))) {
+    const singleSyns = (x) => (x.synonyms || []).filter((s) => !s.includes(" "));
+    // Fall back when a form can't be shown for this word / device.
+    if (kind === "listen" && !HAS_TTS) kind = "meaning";
+    if (kind === "dictation" && !HAS_TTS) kind = "spell";
+    if (kind === "synonym" && !singleSyns(w).length) kind = "word";
+    if (kind === "listen") {
+      prompt = `<button class="say-big" id="say" aria-label="다시 듣기">🔊</button><div class="muted">듣고 알맞은 뜻을 고르세요</div>`;
+      options = shuffle([w, ...others(w, 3, pool.length >= 4 ? pool : S.words)]).map((x) => ({ v: x.id, t: x.meaning }));
+      answer = w.id;
+      onShow = () => { speak(w.word); tap("#say", () => speak(w.word)); };
+    } else if (kind === "synonym") {
+      const mine = singleSyns(w);
+      const target = mine[Math.floor(Math.random() * mine.length)];
+      const taken = new Set([...mine, w.word].map((s) => s.toLowerCase()));
+      const distract = [];
+      for (const x of others(w, 40, S.words)) {
+        const s = singleSyns(x).find((y) => !taken.has(y.toLowerCase()));
+        if (s && !(x.synonyms || []).some((y) => taken.has(y.toLowerCase()))) { distract.push({ v: x.id, t: s }); taken.add(s.toLowerCase()); }
+        if (distract.length === 3) break;
+      }
+      prompt = `<div class="q-word">${esc(w.word)}</div><div class="muted">뜻이 가장 비슷한 단어를 고르세요</div>`;
+      options = shuffle([{ v: w.id, t: target }, ...distract]);
+      answer = w.id;
+    } else if (kind === "usage") {
+      mode = "usage";
+    } else if (kind === "recall") {
+      mode = "recall";
+    } else if (kind === "dictation") {
+      mode = "dictation";
+    } else if (kind === "meaning" || (kind === "context" && !contextRaw(w))) {
       prompt = `<div class="q-word">${esc(w.word)}</div><div class="muted">알맞은 뜻을 고르세요</div>`;
       options = shuffle([w, ...others(w, 3, pool.length >= 4 ? pool : S.words)]).map((x) => ({ v: x.id, t: x.meaning }));
       answer = w.id;
@@ -263,6 +402,7 @@ function ask(kind, w, label, pool) {
         <div class="card q">${prompt}</div>
         <div class="options">${options.map((o, i) => `<button class="opt" data-v="${esc(o.v)}"><span class="n">${i + 1}</span>${esc(o.t)}</button>`).join("")}</div>
         <div id="fb"></div>`);
+      onShow?.();
       tap(".opt", async (el) => {
         answered();
         const ok = el.dataset.v === answer;
@@ -273,6 +413,96 @@ function ask(kind, w, label, pool) {
         if (!ok) el.classList.add("wrong");
         speak(w.word);
         await feedback(ok, w);
+        resolve(ok);
+      });
+    } else if (mode === "recall") {
+      // Retrieve first, then check: say the meaning to yourself before seeing it.
+      screen(`
+        <div class="bar"><span>${label}</span></div>
+        <div class="card q">
+          <div class="q-word">${esc(w.word)} <button class="icon" id="say" aria-label="발음 듣기">🔊</button></div>
+          <div class="muted">뜻을 소리 내어 말해 보고 확인하세요</div>
+          <div id="ans" class="ko hidden">
+            <div class="meaning">${esc(w.meaning)}</div>
+            ${w.root ? `<div class="root small">${esc(w.root)}</div>` : ""}
+          </div>
+        </div>
+        <button class="btn big" id="reveal">뜻 확인</button>
+        <div id="judge" class="row hidden">
+          <button class="btn good" id="yes">떠올렸어요</button>
+          <button class="btn bad" id="no">몰랐어요</button>
+        </div>`);
+      speak(w.word);
+      tap("#say", () => speak(w.word));
+      tap("#reveal", (el) => {
+        answered();
+        el.classList.add("hidden");
+        $app.querySelector("#ans").classList.remove("hidden");
+        $app.querySelector("#judge").classList.remove("hidden");
+      });
+      tap("#yes", () => resolve(true));
+      tap("#no", () => resolve(false)); // the meaning is already on screen; it comes back later
+    } else if (mode === "usage") {
+      // Is the word used correctly here? Half the time the sentence is really another word's
+      // example with this word swapped in.
+      const good = Math.random() < 0.5;
+      const syns = new Set((w.synonyms || []).map((s) => s.toLowerCase()));
+      const other = others(w, 10, pool.length >= 4 ? pool : S.words).find(
+        (x) => !syns.has(x.word.toLowerCase()) && !(x.synonyms || []).some((s) => s.toLowerCase() === w.word.toLowerCase())
+      );
+      const sentence = good || !other ? ex1.en : other.examples[0].en.replace(/\[[^\]]+\]/, `[${w.word}]`);
+      const isGood = good || !other;
+      window.__quiz.good = isGood;
+      screen(`
+        <div class="bar"><span>${label}</span></div>
+        <div class="card q">
+          <div class="muted">밑줄 친 단어가 이 문장에 알맞게 쓰였나요?</div>
+          <div class="q-sent usage">${showEx(sentence)}</div>
+        </div>
+        <div class="row" id="ox">
+          <button class="btn good" data-a="o">알맞아요</button>
+          <button class="btn bad" data-a="x">어색해요</button>
+        </div>
+        <div id="fb"></div>`);
+      tap("#ox .btn", async (el) => {
+        if (el.disabled) return;
+        answered();
+        $app.querySelectorAll("#ox .btn").forEach((b) => (b.disabled = true));
+        const ok = (el.dataset.a === "o") === isGood;
+        const fb = $app.querySelector("#fb");
+        fb.innerHTML = `
+          <div class="fb ${ok ? "good" : "bad"}">${ok ? "정답!" : "오답"} · ${isGood ? "알맞게 쓰인 문장이에요" : `어색한 문장이에요. <b>${esc(w.word)}</b> = ${esc(w.meaning)}`}
+            ${isGood ? `<div class="small">${esc(ex1.ko)}</div>` : `<div class="small">바르게 쓴 예: ${showEx(ex1.en)}<br>${esc(ex1.ko)}</div>`}
+          </div>
+          <button class="btn big" id="next">다음</button>`;
+        speak(w.word);
+        fb.querySelector("#next").addEventListener("click", () => resolve(ok));
+      });
+    } else if (mode === "dictation") {
+      screen(`
+        <div class="bar"><span>${label}</span></div>
+        <div class="card q">
+          <button class="say-big" id="say" aria-label="다시 듣기">🔊</button>
+          <div class="muted">듣고 단어를 쓰세요</div>
+          <div class="small">뜻: ${esc(w.meaning)} · ${w.word.length}글자</div>
+        </div>
+        <form id="f" class="spell">
+          <input id="in" autocomplete="off" autocapitalize="off" autocorrect="off" spellcheck="false" placeholder="들은 단어" />
+          <button class="btn primary">확인</button>
+        </form>
+        <div id="fb"></div>`);
+      speak(w.word);
+      tap("#say", () => speak(w.word));
+      const input = $app.querySelector("#in");
+      input.focus();
+      $app.querySelector("#f").addEventListener("submit", async (e) => {
+        e.preventDefault();
+        const v = input.value.trim().toLowerCase();
+        if (!v) return;
+        answered();
+        const ok = v === w.word.toLowerCase();
+        input.disabled = true;
+        await feedback(ok, w, true);
         resolve(ok);
       });
     } else if (mode === "self") {
