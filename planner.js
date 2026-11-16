@@ -1,11 +1,9 @@
 // Picks each day's passages and words from the student's record, and adjusts the levels.
-import { addDays } from "./db.js";
+import { isDue, recall } from "./memory.js";
 
 export const WORDS_PER_DAY = 20;
 export const PASSAGES_PER_DAY = 3;
-// Days until the next check, by box (box = how many checks the word has passed + 1).
-// box 1 → 2 days after learning, box 2 → 7, box 3 → 21, box 4 → 60, box 5 = mastered.
-export const REVIEW_GAP = { 1: 2, 2: 7, 3: 21, 4: 60 };
+// Review dates come from the word memory model (memory.js).
 
 // Question types grouped so one day mixes different skills.
 export const TYPE_GROUP = {
@@ -80,8 +78,10 @@ export function planDay({ day, state, passages, words, progress, events, usedPas
     .slice(0, WORDS_PER_DAY)
     .map((w) => w.id);
 
+  // Due words, weakest memory first.
   const reviewIds = progress
-    .filter((p) => p.box >= 1 && p.box <= 4 && p.next_review && p.next_review <= day)
+    .filter((p) => isDue(p, day))
+    .sort((a, b) => recall(a, day) - recall(b, day))
     .map((p) => p.word_id);
 
   return {
@@ -112,12 +112,4 @@ export function nextLevels(state, { readingCorrect, readingTotal, wordFirstTry, 
   if (w >= 0.85) wl += 0.5;
   else if (w < 0.6) wl -= 0.5;
   return { level: clamp(level), word_level: clamp(wl) };
-}
-
-export function afterReview(row, correct, day) {
-  if (correct) {
-    const box = row.box + 1;
-    return { ...row, box, next_review: box >= 5 ? null : addDays(day, REVIEW_GAP[box]), correct: row.correct + 1 };
-  }
-  return { ...row, box: 1, next_review: addDays(day, 1), wrong: row.wrong + 1 };
 }
