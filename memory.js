@@ -18,7 +18,7 @@ export const MASTERED_DAYS = 90; // stability at which a word counts as fully le
 export const RETIRE_DAYS = 180; // stop scheduling checks beyond this
 
 // Harder recall tasks tell us more about the memory. Self-graded recall and the matching game
-// weigh least; producing the word (writing from sound) and the delayed, mixed final check most.
+// weigh least; the delayed, mixed final check most. (spell/dictation kept only for old records.)
 export const STAGE_WEIGHT = {
   recall: 1, match: 1, meaning: 1, word: 1.5, listen: 1.5, synonym: 1.5, usage: 1.5,
   cloze: 2, context: 1.5, translate: 1.5, spell: 2.5, dictation: 2.5,
@@ -108,7 +108,7 @@ export function afterReview(row, correct, ms, stage, day) {
 /** Which question to use for a review: recognition for young memories, production for older ones. */
 export function reviewStage(row) {
   const S = row.stability ?? 1;
-  const pool = S < 7 ? ["listen", "cloze", "usage"] : S < 30 ? ["cloze", "usage", "dictation"] : ["dictation", "spell"];
+  const pool = S < 7 ? ["listen", "cloze", "usage"] : S < 30 ? ["cloze", "usage", "synonym"] : ["usage", "synonym", "context"];
   return pool[Math.floor(Math.random() * pool.length)];
 }
 
