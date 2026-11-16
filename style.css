@@ -149,6 +149,11 @@ body.printing #app { display: none; }
 .why li.o .mk { color: var(--good); }
 .why li.x { background: var(--bad-soft); }
 .why li.x .mk { color: var(--bad); }
+/* multi-meaning words & sentence choice */
+.senses { margin-top: 10px; }
+.senses .sn { display: inline-grid; place-items: center; width: 1.5em; height: 1.5em; border-radius: 50%; background: var(--accent-soft); color: var(--accent); font-size: 14px; }
+.opt.sent { font-size: 17px; line-height: 1.5; }
+.opt.sent b { color: var(--text); text-decoration: underline; text-underline-offset: 3px; }
 /* passage analysis */
 .opt.pick { display: block; }
 .badge { display: inline-block; font-size: 12px; padding: 1px 8px; border-radius: 99px; background: var(--bad-soft); color: var(--bad); margin-left: 4px; }
