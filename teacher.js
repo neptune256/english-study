@@ -56,7 +56,7 @@ function render() {
 
   const runout = addDays(DAY, daysLeft);
   $app.innerHTML = `
-    <header class="top"><h1>학습 대시보드</h1><a href="index.html" class="muted small">학생 화면 →</a></header>
+    <header class="top"><h1>학습 대시보드</h1><span class="small"><a href="math-teacher.html${location.search}" class="muted">수학 대시보드 →</a> · <a href="index.html" class="muted">학생 화면 →</a></span></header>
     ${REMOTE ? "" : `<p class="note">로컬 테스트 모드: 이 브라우저에 저장된 기록만 보입니다.</p>`}
     ${daysLeft <= 5 ? `<div class="alert">⚠ 새 지문이 <b>약 ${daysLeft}일분</b> 남았습니다 (예상 소진 ${runout.slice(5).replace("-", "/")}).
       컴퓨터를 켜고 Claude 앱을 열어 두면 저녁 8시 예약 작업이 자동으로 채웁니다.
