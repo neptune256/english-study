@@ -21,13 +21,13 @@ export const RETIRE_DAYS = 180; // stop scheduling checks beyond this
 // weigh least; the delayed, mixed final check most. (spell/dictation kept only for old records.)
 export const STAGE_WEIGHT = {
   recall: 1, match: 1, meaning: 1, word: 1.5, listen: 1.5, synonym: 1.5, usage: 1.5,
-  cloze: 2, context: 1.5, translate: 1.5, spell: 2.5, dictation: 2.5,
+  cloze: 2, context: 1.5, translate: 1.5, spell: 2.5, dictation: 2.5, sense: 2,
 };
 const FINAL_WEIGHT = 3; // stage "final:<kind>"
 // Answers slower than this count as shaky.
 export const SLOW_MS = {
   recall: 10000, match: 10000, meaning: 8000, word: 8000, listen: 8000, synonym: 10000, usage: 12000,
-  cloze: 12000, context: 12000, translate: 20000, spell: 20000, dictation: 20000,
+  cloze: 12000, context: 12000, translate: 20000, spell: 20000, dictation: 20000, sense: 12000,
 };
 const baseStage = (stage) => (stage || "").replace(/^final:/, "");
 
@@ -108,7 +108,8 @@ export function afterReview(row, correct, ms, stage, day) {
 /** Which question to use for a review: recognition for young memories, production for older ones. */
 export function reviewStage(row) {
   const S = row.stability ?? 1;
-  const pool = S < 7 ? ["listen", "cloze", "usage"] : S < 30 ? ["cloze", "usage", "synonym"] : ["usage", "synonym", "context"];
+  // "sense" falls back to "usage" for words with a single meaning (see app.js ask()).
+  const pool = S < 7 ? ["listen", "cloze", "usage"] : S < 30 ? ["cloze", "usage", "sense"] : ["usage", "synonym", "sense"];
   return pool[Math.floor(Math.random() * pool.length)];
 }
 
