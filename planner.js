@@ -1,5 +1,6 @@
 // Picks each day's passages and words from the student's record, and adjusts the levels.
 import { isDue, recall } from "./memory.js";
+import { addDays } from "./db.js";
 
 export const WORDS_PER_DAY = 20;
 export const PASSAGES_PER_DAY = 3; // reading passages; plus one 어법 (grammar) question a day
@@ -38,11 +39,29 @@ export function planDay({ day, state, passages, words, progress, events, usedPas
   const known = new Set(progress.map((p) => p.word_id));
   const stats = typeStats(events, passagesById);
 
+  // If the pool of new passages runs out (no refill for a while), bring back passages the
+  // student already did: last answered wrong first, then the ones done longest ago.
+  // Anything done in the last 7 days is skipped so it isn't fresh in memory.
+  const lastTry = {}; // passage id -> {day, correct}
+  for (const e of events)
+    if (e.kind === "reading" && e.passage_id && (!lastTry[e.passage_id] || lastTry[e.passage_id].day <= e.day))
+      lastTry[e.passage_id] = { day: e.day, correct: e.correct };
+  const recentCutoff = addDays(day, -7);
+  const retakes = (isGrammar) =>
+    passages
+      .filter((p) => (p.qtype === GRAMMAR) === isGrammar && usedPassageIds.has(p.id))
+      .filter((p) => !lastTry[p.id] || lastTry[p.id].day < recentCutoff)
+      .sort((a, b) => {
+        const wa = lastTry[a.id]?.correct === false ? 0 : 1, wb = lastTry[b.id]?.correct === false ? 0 : 1;
+        return wa - wb || (lastTry[a.id]?.day || "").localeCompare(lastTry[b.id]?.day || "");
+      });
+
   // One grammar question: unused, difficulty closest to the student's level.
-  const grammar = passages
-    .filter((p) => p.qtype === GRAMMAR && !usedPassageIds.has(p.id))
-    .map((p) => ({ p, score: Math.abs(p.difficulty - state.level) + Math.random() * 0.5 }))
-    .sort((a, b) => a.score - b.score)[0]?.p;
+  const grammar =
+    passages
+      .filter((p) => p.qtype === GRAMMAR && !usedPassageIds.has(p.id))
+      .map((p) => ({ p, score: Math.abs(p.difficulty - state.level) + Math.random() * 0.5 }))
+      .sort((a, b) => a.score - b.score)[0]?.p ?? retakes(true)[0];
 
   const scored = passages
     .filter((p) => p.qtype !== GRAMMAR && !usedPassageIds.has(p.id))
@@ -65,6 +84,11 @@ export function planDay({ day, state, passages, words, progress, events, usedPas
   }
   // Not enough variety left: fill from the closest remaining.
   for (const { p } of scored) {
+    if (chosen.length === PASSAGES_PER_DAY) break;
+    if (!chosen.includes(p)) chosen.push(p);
+  }
+  // Pool ran dry: fill with retakes.
+  for (const p of retakes(false)) {
     if (chosen.length === PASSAGES_PER_DAY) break;
     if (!chosen.includes(p)) chosen.push(p);
   }
