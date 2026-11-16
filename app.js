@@ -104,21 +104,138 @@ function home() {
       <span class="num">${done ? "✓" : n}</span>
       <div><div class="step-title">${title}</div><div class="muted small">${detail}</div></div>
     </li>`;
-  const next = reviewsLeft ? "review" : wordsLeft ? "vocab" : readLeft ? "reading" : null;
+  const analysisLeft = s.passage_ids.some((id) => !isGrammar(id)) && !sum.analysis ? 1 : 0;
+  const next = reviewsLeft ? "review" : wordsLeft ? "vocab" : readLeft ? "reading" : analysisLeft ? "analysis" : null;
   screen(`
     <header class="top"><h1>오늘의 영어</h1><span class="muted">${DAY}</span></header>
     ${REMOTE ? "" : `<p class="note">로컬 테스트 모드입니다. 기록은 이 기기에만 저장됩니다.</p>`}
     <ol class="steps">
       ${step(1, "복습", s.review_ids.length ? `예전에 외운 단어 ${s.review_ids.length}개 확인` : "오늘은 복습할 단어가 없어요", !reviewsLeft, next === "review")}
-      ${step(2, "단어 외우기", groupsLeft ? `새 단어 ${s.word_ids.length}개 · 남은 단어 ${groupsLeft}개 · 마지막에 최종 점검` : sum.finalDone || !s.word_ids.length ? `새 단어 ${s.word_ids.length}개 완료` : "최종 점검만 남았어요", !wordsLeft, next === "vocab")}
+      ${step(2, "단어 외우기", groupsLeft ? `새 단어 ${s.word_ids.length}개 · 남은 단어 ${groupsLeft}개 · 마지막에 최종 점검` : !s.word_ids.length ? "오늘은 새 단어가 없어요 (지난 지문 복습일)" : sum.finalDone ? `새 단어 ${s.word_ids.length}개 완료` : "최종 점검만 남았어요", !wordsLeft, next === "vocab")}
       ${step(3, "독해 + 어법", `${readingSummary(s)} · 남은 문제 ${readLeft}개`, !readLeft, next === "reading")}
+      ${step(4, "지문 분석", sum.analysis ? `제출 완료 · ${esc(S.passageById[sum.analysis.passage_id]?.source || "")}` : "오늘 지문 하나를 분석해서 PDF로 제출", !analysisLeft, next === "analysis")}
     </ol>
     ${
       next
         ? `<button class="btn primary big" id="go">${sum.wordsDone.length || sum.reviewsDone.length ? "이어서 하기" : "시작하기"}</button>`
         : `<div class="card center"><h2>오늘 학습 완료!</h2>${resultLine()}</div>`
     }`);
-  tap("#go", () => (next === "review" ? review() : next === "vocab" ? vocab() : reading()));
+  tap("#go", () => (next === "review" ? review() : next === "vocab" ? vocab() : next === "reading" ? reading() : analysis()));
+}
+
+// ───────────── passage analysis (PDF, not graded) ─────────────
+const ANALYSIS_GUIDE = [
+  "주제문(또는 요지)에 밑줄 긋고, 글 전체를 한국어 한 줄로 요약하기",
+  "글의 흐름 나누기: 도입 → 전개 → 결론, 역접(But, However)·예시(For example)·결론(Thus) 연결어에 표시",
+  "어려운 문장 2개를 골라 끊어 읽기: 주어·동사 표시하고 직독직해",
+  "모르는 단어·표현 정리 (오늘 외운 단어는 형광펜)",
+  "정답의 근거가 되는 문장 표시하고, 내가 고른 답이 왜 맞았는지/틀렸는지 적기",
+];
+
+function analysis() {
+  const sum = S.set.summary;
+  const ids = S.set.passage_ids.filter((id) => !isGrammar(id));
+  const wrong = new Set(sum.readingDone.filter((r) => !r.correct).map((r) => r.id));
+  screen(`
+    <div class="bar"><span>지문 분석</span></div>
+    <div class="card">
+      <h2>분석할 지문을 하나 고르세요</h2>
+      <p class="muted small">채점은 없어요. 선생님이 수업 때 함께 봐요.</p>
+    </div>
+    <div class="options">${ids.map((id) => {
+      const p = S.passageById[id];
+      return `<button class="opt pick" data-id="${esc(id)}">
+        <div><b>${esc(p.qtype)}</b> · ${esc(p.source)} ${wrong.has(id) ? `<span class="badge">틀린 지문 · 추천</span>` : ""}
+        <div class="muted small">${esc((p.box || p.body).replace(/\{\/?u\}/g, "").slice(0, 90))}…</div></div>
+      </button>`;
+    }).join("")}</div>
+    <button class="btn big" id="back">나중에 할게요</button>`);
+  tap("#back", () => home());
+  tap(".pick", (el) => analysisFor(S.passageById[el.dataset.id]));
+}
+
+function analysisFor(p) {
+  screen(`
+    <div class="bar"><span>지문 분석 · ${esc(p.qtype)}</span><span class="muted small">${esc(p.source)}</span></div>
+    <div class="card">
+      <h2>이렇게 분석해 보세요</h2>
+      <ol class="guide">${ANALYSIS_GUIDE.map((g) => `<li>${esc(g)}</li>`).join("")}</ol>
+      <p class="muted small">① 아래 "지문 열기"로 지문을 PDF로 저장하거나 인쇄하고 ② 굿노트·노트 앱이나 종이에 분석한 뒤 ③ PDF로 내보내서(사진은 PDF로 변환) 제출하세요.</p>
+      <button class="btn big" id="print">지문 열기 (PDF 저장·인쇄)</button>
+    </div>
+    <div class="card">
+      <h2>분석 PDF 제출</h2>
+      <label class="file">
+        <input type="file" id="file" accept="application/pdf,.pdf" />
+        <span id="fname">PDF 파일 선택</span>
+      </label>
+      <button class="btn primary big" id="send" disabled>제출하기</button>
+      <div id="fb"></div>
+    </div>
+    <button class="btn big" id="back">다른 지문 고르기</button>`);
+  tap("#back", () => analysis());
+  tap("#print", () => printPassage(p));
+  const input = $app.querySelector("#file");
+  input.addEventListener("change", () => {
+    const f = input.files[0];
+    $app.querySelector("#fname").textContent = f ? `${f.name} (${(f.size / 1048576).toFixed(1)}MB)` : "PDF 파일 선택";
+    $app.querySelector("#send").disabled = !f;
+  });
+  tap("#send", async (btn) => {
+    const f = input.files[0];
+    const fb = $app.querySelector("#fb");
+    if (!f) return;
+    if (f.type && f.type !== "application/pdf") return (fb.innerHTML = `<div class="fb bad">PDF 파일만 제출할 수 있어요.</div>`);
+    if (f.size > 50 * 1048576) return (fb.innerHTML = `<div class="fb bad">50MB 이하로 줄여서 제출해 주세요.</div>`);
+    btn.disabled = true;
+    btn.textContent = "올리는 중…";
+    try {
+      const row = await db.submitAnalysis({ day: DAY, passageId: p.id, file: f });
+      S.set.summary.analysis = { passage_id: p.id, path: row.path, file_name: f.name, at: new Date().toISOString() };
+      await saveSet();
+      fb.innerHTML = `<div class="fb good">제출했어요! 수고했어요.</div>`;
+      await wait(1200);
+      home();
+    } catch (e) {
+      btn.disabled = false;
+      btn.textContent = "다시 제출하기";
+      fb.innerHTML = `<div class="fb bad">${esc(e.message)}</div>`;
+    }
+  });
+}
+
+/**
+ * A clean, printable copy of the passage shown inside the app (no popup, so it also works
+ * from the home-screen app). "인쇄 / PDF로 저장" opens the system print sheet, where the
+ * student can print or save as PDF and then annotate it in a notes app.
+ */
+function printPassage(p) {
+  const body = esc(p.body)
+    .replace(/\{u\}/g, "<u>").replace(/\{\/u\}/g, "</u>")
+    .replace(/_{3,}/g, "<span class='pblank'></span>")
+    .split(/\n{2,}/).map((x) => `<p>${x.replace(/\n/g, "<br>")}</p>`).join("");
+  const q = p.questions[0];
+  const sheet = document.createElement("div");
+  sheet.className = "print-sheet";
+  sheet.innerHTML = `
+    <div class="print-bar no-print">
+      <button class="btn primary" id="doprint">인쇄 / PDF로 저장</button>
+      <button class="btn" id="closeprint">돌아가기</button>
+    </div>
+    <h1>${esc(p.source)} · ${esc(p.instruction)}</h1>
+    ${p.box ? `<div class="given">${esc(p.box).replace(/\n/g, "<br>")}</div>` : ""}
+    <div class="pbody">${body}</div>
+    ${p.glossary.length ? `<div class="pg">${p.glossary.map((g) => "* " + esc(g)).join("&nbsp;&nbsp;")}</div>` : ""}
+    <ol class="pc">${q.choices.map((c) => `<li>${esc(c)}</li>`).join("")}</ol>
+    <div class="plines"><b>분석 메모</b>${"<div></div>".repeat(8)}</div>`;
+  document.body.appendChild(sheet);
+  document.body.classList.add("printing");
+  window.scrollTo(0, 0);
+  sheet.querySelector("#doprint").addEventListener("click", () => window.print());
+  sheet.querySelector("#closeprint").addEventListener("click", () => {
+    sheet.remove();
+    document.body.classList.remove("printing");
+  });
 }
 
 const isGrammar = (id) => S.passageById[id]?.qtype === GRAMMAR;
