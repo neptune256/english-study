@@ -1,0 +1,52 @@
+<!doctype html>
+<html lang="ko">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <meta name="robots" content="noindex" />
+  <title>수학 대시보드</title>
+  <link rel="stylesheet" href="style.css" />
+  <style>
+    #app { max-width: 1100px; }
+    .kpis { display: grid; grid-template-columns: repeat(auto-fit, minmax(150px, 1fr)); gap: 10px; margin-bottom: 18px; }
+    .kpi { background: var(--card); border: 1px solid var(--line); border-radius: var(--radius); padding: 14px 16px; }
+    .kpi .v { font-size: 28px; font-weight: 700; }
+    .kpi .v small { font-size: 16px; }
+    .kpi .l { color: var(--muted); font-size: 14px; }
+    .kpi.warn { border-color: var(--bad); }
+    h2 { font-size: 20px; margin: 26px 0 10px; }
+    .tbl-wrap { overflow-x: auto; background: var(--card); border: 1px solid var(--line); border-radius: var(--radius); }
+    table { border-collapse: collapse; width: 100%; font-size: 15px; }
+    th, td { text-align: left; padding: 9px 12px; border-bottom: 1px solid var(--line); vertical-align: top; }
+    th { color: var(--muted); font-weight: 600; white-space: nowrap; }
+    tr.click { cursor: pointer; }
+    tr.click:hover, tr.sel { background: var(--accent-soft); }
+    .ox { font-weight: 700; }
+    .o { color: var(--good); } .x { color: var(--bad); }
+    .pill { display: inline-block; font-size: 12px; padding: 1px 8px; border-radius: 99px; background: var(--line); white-space: nowrap; }
+    .pill.warn { background: var(--bad-soft); color: var(--bad); }
+    .two { display: grid; grid-template-columns: 1fr 1fr; gap: 14px; }
+    @media (max-width: 760px) { .two { grid-template-columns: 1fr; } }
+    .bar-cell { display: flex; align-items: center; gap: 8px; }
+    .bar-bg { flex: 1; height: 8px; background: var(--line); border-radius: 4px; overflow: hidden; min-width: 60px; }
+    .bar-fg { height: 100%; background: var(--accent); }
+    .forecast { padding: 14px 16px; }
+    .fc-row { display: grid; grid-template-columns: repeat(14, 1fr); gap: 6px; margin-bottom: 6px; }
+    .fc { text-align: center; font-size: 12px; }
+    .fc-bar { height: 60px; display: flex; align-items: flex-end; background: var(--bg); border-radius: 4px; overflow: hidden; }
+    .fc-bar div { width: 100%; background: var(--accent); }
+    .fc-n { font-weight: 700; min-height: 1.2em; }
+    .fc-d { color: var(--muted); }
+    .pimg-box { background: #fff; border-radius: 10px; padding: 10px; max-width: 720px; }
+    @media (prefers-color-scheme: dark) {
+      :root:not([data-theme="light"]) .pimg-box { background: #1b1b1a; }
+      :root:not([data-theme="light"]) #pimg { filter: invert(0.9) hue-rotate(180deg); }
+    }
+  </style>
+</head>
+<body>
+  <main id="app"><div class="center muted">불러오는 중…</div></main>
+  <script src="config.js"></script>
+  <script type="module" src="math-teacher.js"></script>
+</body>
+</html>
