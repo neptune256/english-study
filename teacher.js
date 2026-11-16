@@ -20,11 +20,11 @@ const mins = (ms) => Math.max(1, Math.round(ms / 60000)) + "분";
 let D;
 
 async function load() {
-  const [state, daily, events, progress, passages, words] = await Promise.all([
-    db.state(), db.allDaily(), db.events(), db.progress(), db.passages(), db.words(),
+  const [state, daily, events, progress, passages, words, submissions] = await Promise.all([
+    db.state(), db.allDaily(), db.events(), db.progress(), db.passages(), db.words(), db.submissions(),
   ]);
   D = {
-    state, daily, events, progress, passages, words,
+    state, daily, events, progress, passages, words, submissions,
     wordById: Object.fromEntries(words.map((w) => [w.id, w])),
     passageById: Object.fromEntries(passages.map((p) => [p.id, p])),
   };
@@ -71,6 +71,9 @@ function render() {
     ${dailyTable()}
     <div id="detail"></div>
 
+    <h2>지문 분석 제출물 <span class="muted small">학생이 올린 PDF (채점 없음)</span></h2>
+    ${submissionList()}
+
     <h2>단어 숙지도 <span class="muted small">기억 확률 = 지금 물어보면 맞힐 확률 추정치. 90% 아래로 떨어지는 날이 복습일입니다.</span></h2>
     <div id="mastery">${masterySection()}</div>
 
@@ -87,7 +90,49 @@ function render() {
     })
   );
   bindMastery();
+  $app.querySelectorAll(".open-pdf").forEach((b) => b.addEventListener("click", (e) => { e.stopPropagation(); openPdf(b); }));
   if (D.daily.length) showDay(D.daily[0].day);
+}
+
+function submissionList() {
+  if (!D.submissions.length) return `<div class="card muted">아직 제출된 분석이 없습니다.</div>`;
+  return `<div class="tbl-wrap"><table>
+    <tr><th>날짜</th><th>지문</th><th>학생 정답 여부</th><th>파일</th><th>제출 시각</th><th></th></tr>
+    ${D.submissions.map((s) => {
+      const p = D.passageById[s.passage_id];
+      const d = D.daily.find((x) => x.day === s.day);
+      const r = d?.summary.readingDone?.find((x) => x.id === s.passage_id);
+      return `<tr>
+        <td>${esc(s.day)}</td>
+        <td>${esc(p?.source || s.passage_id)} <span class="small muted">${esc(p?.qtype || "")}</span></td>
+        <td>${r ? `<span class="ox ${r.correct ? "o" : "x"}">${r.correct ? "O" : "X"}</span>` : "–"}</td>
+        <td class="small">${esc(s.file_name || "")} ${s.size ? `(${(s.size / 1048576).toFixed(1)}MB)` : ""}</td>
+        <td class="small">${new Date(s.submitted_at).toLocaleString("ko-KR", { timeZone: "Asia/Seoul" })}</td>
+        <td><button class="btn open-pdf" data-path="${esc(s.path)}">PDF 열기</button></td>
+      </tr>`;
+    }).join("")}</table></div>`;
+}
+
+async function openPdf(btn) {
+  // Open the tab right away (inside the click) so it isn't blocked, then fill it.
+  const w = window.open("", "_blank");
+  btn.disabled = true;
+  try {
+    const blob = await db.analysisFile(btn.dataset.path);
+    if (!blob) {
+      w?.close();
+      alert("로컬 테스트 모드에서는 파일이 저장되지 않아요.");
+      return;
+    }
+    const url = URL.createObjectURL(new Blob([blob], { type: "application/pdf" }));
+    if (w) w.location.href = url;
+    else location.href = url;
+  } catch (e) {
+    w?.close();
+    alert(e.message);
+  } finally {
+    btn.disabled = false;
+  }
 }
 
 // ───────────── word mastery ─────────────
@@ -188,12 +233,13 @@ function dailyTable() {
         const p = D.passageById[id];
         return `${r ? `<span class="ox ${r.correct ? "o" : "x"}">${r.correct ? "O" : "X"}</span>` : "·"} <span class="small">${esc(p?.qtype)}</span>`;
       }).join(" &nbsp; ")}</td>
+      <td>${d.summary.analysis ? `<button class="btn open-pdf" data-path="${esc(d.summary.analysis.path)}">PDF</button>` : "–"}</td>
       <td>${d.level_at_start}${st ? ` → ${st.levelAfter}` : ""}</td>
       <td>${ms ? mins(ms) : "–"}</td>
     </tr>`;
   });
   return `<div class="tbl-wrap"><table>
-    <tr><th>날짜</th><th>단어 (완료 · 첫 시도 정답률)</th><th>복습</th><th>독해</th><th>수준</th><th>소요</th></tr>
+    <tr><th>날짜</th><th>단어 (완료 · 첫 시도 정답률)</th><th>복습</th><th>독해</th><th>분석</th><th>수준</th><th>소요</th></tr>
     ${rows.join("")}</table></div>`;
 }
 
