@@ -88,3 +88,24 @@
 .m-kpi .v { font-size: 26px; font-weight: 700; }
 .m-kpi .l { color: var(--muted); font-size: 14px; }
 .m-peek { margin-top: 10px; }
+
+/* 오늘의 5문제 */
+.m-daily { border: 1.5px solid var(--accent); }
+.m-daily h2 { font-size: 22px; }
+.m-daily .row .btn { flex: 1; }
+.m-streak { font-weight: 700; color: var(--muted); white-space: nowrap; }
+.m-streak.on { color: #d4691c; }
+.m-done { font-weight: 700; color: var(--good); margin: 6px 0; }
+.m-chips { list-style: none; padding: 0; margin: 10px 0 12px; display: grid; gap: 6px; }
+.m-chip { display: flex; align-items: center; gap: 10px; padding: 8px 10px; border-radius: 10px; background: var(--bg); font-size: 16px; }
+.m-dot { width: 28px; height: 28px; border-radius: 50%; display: grid; place-items: center; flex: none;
+  background: var(--line); font-weight: 700; font-size: 14px; }
+.m-chip.ok .m-dot { background: var(--good); color: #fff; }
+.m-chip.no .m-dot { background: var(--bad); color: #fff; }
+.m-tag { display: inline-block; font-size: 12px; font-weight: 700; padding: 1px 8px; border-radius: 99px; background: var(--accent-soft); color: var(--accent); }
+.m-tag.re { background: var(--bad-soft); color: var(--bad); }
+.m-chip .m-tag { margin-left: auto; }
+.m-review-line { margin: -4px 0 8px; }
+.m-review-line .btn { margin-left: 6px; }
+.m-more { margin-top: 22px; }
+.m-more summary { cursor: pointer; font-weight: 700; padding: 10px 0; }
