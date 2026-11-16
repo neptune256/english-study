@@ -608,7 +608,7 @@ function ask(kind, w, label, pool) {
         });
         if (!ok) el.classList.add("wrong");
         speak(w.word);
-        await feedback(ok, w);
+        await explainChoice(kind, w, options, el.dataset.v, ok, ex0);
         resolve(ok);
       });
     } else if (mode === "recall") {
@@ -666,11 +666,18 @@ function ask(kind, w, label, pool) {
         $app.querySelectorAll("#ox .btn").forEach((b) => (b.disabled = true));
         const ok = (el.dataset.a === "o") === isGood;
         const fb = $app.querySelector("#fb");
+        const head = `<div class="ex-head"><b>${esc(w.word)}</b> <span class="muted small">${esc(w.pos)}</span> = ${esc(w.meaning)}</div>`;
+        const body = isGood
+          ? `<p>✓ 알맞게 쓰인 문장이에요. 여기서 <b>${esc(w.word)}</b>는 '${esc(w.meaning)}'의 뜻이에요.</p>
+             <p class="small">${showEx(ex1.en)}<br>${esc(ex1.ko)}</p>`
+          : `<p>✗ 어색한 문장이에요. 이 자리에는 원래 <b>${esc(other.word)}</b> '${esc(other.meaning)}'가 들어가요.</p>
+             <p class="small">${showEx(other.examples[0].en)}<br>${esc(other.examples[0].ko)}</p>
+             <p>✓ <b>${esc(w.word)}</b>를 바르게 쓴 예:</p>
+             <p class="small">${showEx(ex1.en)}<br>${esc(ex1.ko)}</p>`;
         fb.innerHTML = `
-          <div class="fb ${ok ? "good" : "bad"}">${ok ? "정답!" : "오답"} · ${isGood ? "알맞게 쓰인 문장이에요" : `어색한 문장이에요. <b>${esc(w.word)}</b> = ${esc(w.meaning)}`}
-            ${isGood ? `<div class="small">${esc(ex1.ko)}</div>` : `<div class="small">바르게 쓴 예: ${showEx(ex1.en)}<br>${esc(ex1.ko)}</div>`}
-          </div>
-          <button class="btn big" id="next">다음</button>`;
+          <div class="fb ${ok ? "good" : "bad"}">${ok ? "정답!" : "오답"}</div>
+          <div class="card explain">${head}${body}</div>
+          <button class="btn big primary" id="next">다음</button>`;
         speak(w.word);
         fb.querySelector("#next").addEventListener("click", () => resolve(ok));
       });
@@ -754,6 +761,50 @@ function ask(kind, w, label, pool) {
         resolve(ok);
       });
     }
+  });
+}
+
+/**
+ * After a multiple-choice word question (right or wrong): why each option is or isn't the answer.
+ * Every option belongs to a known word, so the reason comes from that word's meaning.
+ */
+function explainChoice(kind, w, options, picked, ok, ex0) {
+  return new Promise((resolve) => {
+    const fb = $app.querySelector("#fb");
+    const head = `<div class="ex-head"><b>${esc(w.word)}</b> <span class="muted small">${esc(w.pos)}</span> = ${esc(w.meaning)}
+      ${w.root ? `<div class="small root-line">${esc(w.root)}</div>` : ""}</div>`;
+    const lines = options.map((o) => {
+      const x = S.wordById[o.v] || w;
+      const right = o.v === w.id;
+      const mine = o.v === picked;
+      let why;
+      if (kind === "synonym") {
+        why = right
+          ? `<b>${esc(o.t)}</b> ≈ <b>${esc(w.word)}</b> : 둘 다 '${esc(w.meaning)}'라는 뜻이에요.`
+          : `<b>${esc(o.t)}</b>는 <b>${esc(x.word)}</b> '${esc(x.meaning)}'와 비슷한 말이라 ${esc(w.word)}와 뜻이 달라요.`;
+      } else if (kind === "word") {
+        why = right
+          ? `<b>${esc(x.word)}</b> = ${esc(x.meaning)}`
+          : `<b>${esc(x.word)}</b> = ${esc(x.meaning)} → '${esc(w.meaning)}'와 다른 뜻이에요.`;
+      } else if (kind === "cloze") {
+        const form = o.t.toLowerCase() === x.word.toLowerCase() ? `<b>${esc(o.t)}</b>` : `<b>${esc(o.t)}</b> · ${esc(x.word)}`;
+        why = right
+          ? `${form} '${esc(x.meaning)}' → '${esc(ex0.ko)}'의 뜻이 되어 문장에 딱 맞아요.`
+          : `${form} '${esc(x.meaning)}' → 이 뜻을 넣으면 문장이 통하지 않아요.`;
+      } else {
+        // meaning / listen / context: the options are meanings
+        why = right
+          ? `'${esc(o.t)}' → <b>${esc(w.word)}</b>의 뜻${kind === "context" ? " (이 지문 문장에서 쓰인 뜻)" : ""}`
+          : `'${esc(o.t)}' → 이건 <b>${esc(x.word)}</b>의 뜻이에요.`;
+      }
+      return `<li class="${right ? "o" : mine ? "x" : ""}"><span class="mk">${right ? "✓" : mine ? "✗" : "·"}</span><span>${why}</span></li>`;
+    });
+    fb.innerHTML = `
+      <div class="fb ${ok ? "good" : "bad"}">${ok ? "정답!" : "오답"}${ok ? "" : `<div class="small">이 단어는 잠시 뒤에 다시 나와요.</div>`}</div>
+      <div class="card explain">${head}<ul class="why">${lines.join("")}</ul></div>
+      <button class="btn big primary" id="next">다음</button>`;
+    fb.querySelector("#next").addEventListener("click", () => resolve());
+    fb.scrollIntoView({ behavior: "smooth", block: "nearest" });
   });
 }
 
