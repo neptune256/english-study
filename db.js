@@ -109,8 +109,11 @@ export const db = {
     for (const r of rows) all.push({ id: id++, at: new Date().toISOString(), ...r });
     lsSet("events", all);
   },
-  async events() {
-    return REMOTE ? rest("GET", "events?select=*&order=at") : lsGet("events", []);
+  /** All events, or only one day's when `day` is given. */
+  async events(day) {
+    if (REMOTE) return rest("GET", `events?select=*${day ? `&day=eq.${day}` : ""}&order=at`);
+    const all = lsGet("events", []);
+    return day ? all.filter((e) => e.day === day) : all;
   },
 
   // ───── passage analysis PDFs (Supabase Storage bucket "analysis") ─────
