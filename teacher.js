@@ -10,7 +10,11 @@ const esc = (s) =>
   String(s ?? "").replace(/[&<>"']/g, (c) => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;" })[c]);
 const CIRCLED = ["①", "②", "③", "④", "⑤"];
 const pct = (a, b) => (b ? Math.round((100 * a) / b) + "%" : "–");
-const STAGE_KO = { meaning: "뜻 고르기", word: "단어 고르기", cloze: "빈칸", context: "지문 속 의미", translate: "해석", spell: "철자" };
+const STAGE_KO = {
+  recall: "떠올리기", match: "짝 맞추기", listen: "듣고 뜻", synonym: "유의어", usage: "쓰임 판단", dictation: "듣고 쓰기",
+  meaning: "뜻 고르기", word: "단어 고르기", cloze: "빈칸", context: "지문 속 의미", translate: "해석", spell: "철자",
+};
+const stageKo = (s) => (s?.startsWith("final:") ? "최종 점검(" + (STAGE_KO[s.slice(6)] || s.slice(6)) + ")" : STAGE_KO[s] || s);
 const mins = (ms) => Math.max(1, Math.round(ms / 60000)) + "분";
 
 let D;
@@ -197,7 +201,7 @@ function showDay(day) {
   const wordRows = d.word_ids.map((id) => {
     const w = D.wordById[id];
     const mine = ev.filter((e) => e.kind === "drill" && e.word_id === id);
-    const wrongStages = mine.filter((e) => !e.correct).map((e) => STAGE_KO[e.stage] || e.stage);
+    const wrongStages = mine.filter((e) => !e.correct).map((e) => stageKo(e.stage));
     return `<tr><td><b>${esc(w?.word)}</b></td><td>${esc(w?.meaning)}</td>
       <td>${mine.length ? (wrongStages.length ? `<span class="x">${wrongStages.length}회</span> <span class="small muted">${[...new Set(wrongStages)].join(", ")}</span>` : `<span class="o">0</span>`) : "미학습"}</td></tr>`;
   });
