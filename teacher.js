@@ -1,5 +1,5 @@
 import { db, today, addDays, REMOTE } from "./db.js";
-import { typeStats, PASSAGES_PER_DAY } from "./planner.js";
+import { typeStats, PASSAGES_PER_DAY, GRAMMAR } from "./planner.js";
 import { recall, masteryLabel, isDue, MASTERED_DAYS } from "./memory.js";
 
 const DAY = new URLSearchParams(location.search).get("day") || today(); // ?day= to preview another date
@@ -45,8 +45,10 @@ function streak() {
 
 function render() {
   const used = new Set(D.daily.flatMap((d) => d.passage_ids));
-  const poolLeft = D.passages.filter((p) => !used.has(p.id)).length;
-  const daysLeft = Math.floor(poolLeft / PASSAGES_PER_DAY);
+  const unused = D.passages.filter((p) => !used.has(p.id));
+  const poolLeft = unused.filter((p) => p.qtype !== GRAMMAR).length;
+  const grammarLeft = unused.filter((p) => p.qtype === GRAMMAR).length;
+  const daysLeft = Math.min(Math.floor(poolLeft / PASSAGES_PER_DAY), grammarLeft);
   const learned = D.progress.filter((p) => p.learned_on).length;
   const mastered = D.progress.filter((p) => (p.stability ?? 0) >= MASTERED_DAYS).length;
   const due = D.progress.filter((p) => isDue(p, DAY)).length;
@@ -62,7 +64,7 @@ function render() {
       <div class="kpi"><div class="v">${learned}</div><div class="l">외운 단어 · 완전 암기 ${mastered}</div></div>
       <div class="kpi"><div class="v">${learned ? Math.round(avgR * 100) + "%" : "–"}</div><div class="l">외운 단어 평균 기억 확률</div></div>
       <div class="kpi"><div class="v">${due}</div><div class="l">오늘까지 복습할 단어</div></div>
-      <div class="kpi ${daysLeft < 7 ? "warn" : ""}"><div class="v">${poolLeft}</div><div class="l">남은 지문 (약 ${daysLeft}일분)</div></div>
+      <div class="kpi ${daysLeft < 7 ? "warn" : ""}"><div class="v">${poolLeft} · ${grammarLeft}</div><div class="l">남은 독해 지문 · 어법 문제 (약 ${daysLeft}일분)</div></div>
     </div>
 
     <h2>날짜별 기록</h2>
@@ -229,6 +231,7 @@ function passageView(p, q) {
   return `${p.box ? `<div class="pbody given">${esc(p.box)}</div>` : ""}
     <div class="pbody">${esc(p.body.replace(/\{\/?u\}/g, ""))}</div>
     <ol class="small">${q.choices.map((c, i) => `<li ${i + 1 === q.answer ? 'class="o"' : ""}>${esc(c)}</li>`).join("")}</ol>
+    ${q.point ? `<p class="small"><b>어법 포인트</b> ${esc(q.point)}</p>` : ""}
     <p class="small"><b>풀이</b> ${esc(q.explanation)}</p>`;
 }
 
