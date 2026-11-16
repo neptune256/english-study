@@ -2,7 +2,8 @@
 import { isDue, recall } from "./memory.js";
 
 export const WORDS_PER_DAY = 20;
-export const PASSAGES_PER_DAY = 3;
+export const PASSAGES_PER_DAY = 3; // reading passages; plus one 어법 (grammar) question a day
+export const GRAMMAR = "어법";
 // Review dates come from the word memory model (memory.js).
 
 // Question types grouped so one day mixes different skills.
@@ -37,8 +38,14 @@ export function planDay({ day, state, passages, words, progress, events, usedPas
   const known = new Set(progress.map((p) => p.word_id));
   const stats = typeStats(events, passagesById);
 
+  // One grammar question: unused, difficulty closest to the student's level.
+  const grammar = passages
+    .filter((p) => p.qtype === GRAMMAR && !usedPassageIds.has(p.id))
+    .map((p) => ({ p, score: Math.abs(p.difficulty - state.level) + Math.random() * 0.5 }))
+    .sort((a, b) => a.score - b.score)[0]?.p;
+
   const scored = passages
-    .filter((p) => !usedPassageIds.has(p.id))
+    .filter((p) => p.qtype !== GRAMMAR && !usedPassageIds.has(p.id))
     .map((p) => {
       const st = stats[p.qtype];
       const weak = st && st.n >= 2 && st.correct / st.n < 0.6 ? 0.6 : 0;
@@ -86,7 +93,7 @@ export function planDay({ day, state, passages, words, progress, events, usedPas
 
   return {
     day,
-    passage_ids: chosen.map((p) => p.id),
+    passage_ids: [...chosen.map((p) => p.id), ...(grammar ? [grammar.id] : [])], // grammar last
     word_ids: wordIds,
     review_ids: reviewIds,
     level_at_start: state.level,
