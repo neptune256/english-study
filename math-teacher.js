@@ -43,7 +43,7 @@ function render() {
   const last = exams[0];
 
   $app.innerHTML = `
-    <header class="top"><h1>수학 대시보드</h1><span class="small"><a href="math.html" class="muted">학생 화면 →</a></span></header>
+    <header class="top"><h1>수학 대시보드</h1><span class="small"><a href="teacher.html${location.search}" class="muted">영어 대시보드 →</a> · <a href="index.html" class="muted">학생 화면 →</a></span></header>
     ${REMOTE ? "" : `<p class="note">로컬 테스트 모드: 이 브라우저에 저장된 기록만 보입니다.</p>`}
     <div class="kpis">
       <div class="kpi"><div class="v">${last ? last.score + "점" : "–"}</div><div class="l">최근 실전${last ? ` · ${esc(D.examById[last.exam]?.label)}` : ""}</div></div>
