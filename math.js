@@ -110,7 +110,7 @@ function home() {
   });
 
   screen(`
-    <header class="top"><h1>오늘의 수학</h1><a class="muted small" href="index.html">영어 →</a></header>
+    <header class="top"><h1>오늘의 수학</h1><span class="muted">${DAY} · <a href="index.html${location.search}">과목 선택</a></span></header>
     ${REMOTE ? "" : `<p class="note">로컬 테스트 모드입니다. 기록은 이 기기에만 저장됩니다.</p>`}
     <p class="muted small m-intro">2028 수능 범위(대수 · 미적분Ⅰ · 확률과 통계) 평가원 기출입니다. 풀이는 종이나 노트 앱에 하고 답만 입력하세요.</p>
 
