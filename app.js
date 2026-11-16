@@ -111,7 +111,7 @@ function home() {
     ${REMOTE ? "" : `<p class="note">로컬 테스트 모드입니다. 기록은 이 기기에만 저장됩니다.</p>`}
     <ol class="steps">
       ${step(1, "복습", s.review_ids.length ? `예전에 외운 단어 ${s.review_ids.length}개 확인` : "오늘은 복습할 단어가 없어요", !reviewsLeft, next === "review")}
-      ${step(2, "단어 외우기", groupsLeft ? `새 단어 ${s.word_ids.length}개 · 남은 단어 ${groupsLeft}개 · 마지막에 최종 점검` : !s.word_ids.length ? "오늘은 새 단어가 없어요 (지난 지문 복습일)" : sum.finalDone ? `새 단어 ${s.word_ids.length}개 완료` : "최종 점검만 남았어요", !wordsLeft, next === "vocab")}
+      ${step(2, "단어 외우기", groupsLeft ? `${wordMix(s)} · 남은 단어 ${groupsLeft}개 · 마지막에 최종 점검` : !s.word_ids.length ? "오늘은 새 단어가 없어요 (지난 지문 복습일)" : sum.finalDone ? `${wordMix(s)} 완료` : "최종 점검만 남았어요", !wordsLeft, next === "vocab")}
       ${step(3, "독해 + 어법", `${readingSummary(s)} · 남은 문제 ${readLeft}개`, !readLeft, next === "reading")}
       ${step(4, "지문 분석", sum.analysis ? `제출 완료 · ${esc(S.passageById[sum.analysis.passage_id]?.source || "")}` : "오늘 지문 하나를 분석해서 PDF로 제출", !analysisLeft, next === "analysis")}
     </ol>
@@ -239,6 +239,19 @@ function printPassage(p) {
 }
 
 const isGrammar = (id) => S.passageById[id]?.qtype === GRAMMAR;
+const isRelearn = (id) => (S.set.summary.relearnIds || []).includes(id);
+function wordMix(s) {
+  const m = s.word_ids.filter(isRelearn).length;
+  return `새 단어 ${s.word_ids.length - m}개${m ? ` + 다시 배우기 ${m}개` : ""}`;
+}
+
+/** Progress row after studying a word in full today. Relearned words keep their history. */
+function learnedRow(w, attempts) {
+  const fresh = afterLearning(w.id, attempts, DAY);
+  const prev = S.progressById[w.id];
+  if (!prev || !isRelearn(w.id)) return fresh;
+  return { ...fresh, learned_on: prev.learned_on, reps: prev.reps || 0, lapses: prev.lapses || 0, correct: prev.correct || 0, wrong: prev.wrong || 0 };
+}
 function readingSummary(s) {
   const g = s.passage_ids.filter(isGrammar).length;
   return `지문 ${s.passage_ids.length - g}개${g ? ` + 어법 ${g}문제` : ""}`;
@@ -316,7 +329,7 @@ async function vocab() {
       }
     }
     // Group finished: these words are now learned; how well the drills went sets the first review date.
-    const rows = group.map((w) => afterLearning(w.id, attempts[w.id], DAY));
+    const rows = group.map((w) => learnedRow(w, attempts[w.id]));
     rows.forEach((r) => (S.progressById[r.word_id] = r));
     await db.saveProgress(rows);
     sum.wordsDone.push(...group.map((w) => w.id));
@@ -350,7 +363,7 @@ async function finalCheck(todays) {
     else queue.push({ w, kind: FINAL_KINDS[(FINAL_KINDS.indexOf(kind) + 1) % FINAL_KINDS.length] });
   }
   const todayDrills = (await db.events()).filter((e) => e.day === DAY && e.kind === "drill");
-  const rows = todays.map((w) => afterLearning(w.id, todayDrills.filter((e) => e.word_id === w.id), DAY));
+  const rows = todays.map((w) => learnedRow(w, todayDrills.filter((e) => e.word_id === w.id)));
   rows.forEach((r) => (S.progressById[r.word_id] = r));
   await db.saveProgress(rows);
   sum.finalDone = true;
@@ -427,7 +440,7 @@ function card(w, label, isReview = false) {
           <h2 class="word">${esc(w.word)}</h2>
           <button class="icon" id="say" aria-label="발음 듣기">🔊</button>
         </div>
-        <div class="pos">${esc(w.pos)}</div>
+        <div class="pos">${esc(w.pos)}${!isReview && isRelearn(w.id) ? ` <span class="badge">다시 배우기 · 예전에 외운 단어</span>` : ""}</div>
         <div class="meaning">${esc(w.meaning)}</div>
         ${w.root ? `<div class="root"><span class="tag">어원·연상</span> ${esc(w.root)}</div>` : ""}
         ${w.extra ? `<div class="muted small">${esc(w.extra)}</div>` : ""}
