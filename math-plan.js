@@ -70,10 +70,15 @@ export function unitStats(attempts, byId) {
 }
 
 /** Pick `count` new problems. `taken` = problem ids already in today's set. */
-export function pickNew({ problems, attempts, sessions, byId, level, day, taken = [], count }) {
+export function pickNew({ problems, attempts, sessions, byId, level, day, taken = [], count, prefer }) {
   const tried = new Set(attempts.map((a) => a.problem_id));
   const takenSet = new Set(taken);
   let pool = problems.filter((p) => !tried.has(p.id) && !takenSet.has(p.id));
+  // problems with a written solution first, as long as there are enough of them
+  if (prefer && prefer.size) {
+    const withSol = pool.filter((p) => prefer.has(p.id));
+    if (withSol.length >= count) pool = withSol;
+  }
   const stats = unitStats(attempts, byId);
   const recent = {};
   for (const s of sessions) {
@@ -117,13 +122,13 @@ export function pickNew({ problems, attempts, sessions, byId, level, day, taken 
 }
 
 /** Today's set: due wrong answers first (up to 3), then new problems. */
-export function planDaily({ problems, attempts, sessions, review, byId, day }) {
+export function planDaily({ problems, attempts, sessions, review, byId, day, prefer }) {
   const level = currentLevel(sessions);
   const due = review.filter((r) => isDue(r, day) && byId[r.problem_id])
     .sort((a, b) => a.next_review.localeCompare(b.next_review))
     .slice(0, MAX_REVIEW_SLOTS)
     .map((r) => r.problem_id);
-  const fresh = pickNew({ problems, attempts, sessions, byId, level, day, taken: due, count: DAILY_COUNT - due.length });
+  const fresh = pickNew({ problems, attempts, sessions, byId, level, day, taken: due, count: DAILY_COUNT - due.length, prefer });
   return {
     id: dailyId(day), day, mode: "daily", started_at: new Date().toISOString(),
     draft: { ids: [...due, ...fresh.map((p) => p.id)], review_ids: due, level, done: {}, bonus: [] },
