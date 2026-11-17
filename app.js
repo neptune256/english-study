@@ -518,7 +518,7 @@ function card(w, label, isReview = false) {
         <div class="meaning">${esc(w.meaning)}</div>
         ${w.root ? `<div class="root"><span class="tag">어원·연상</span> ${esc(w.root)}</div>` : ""}
         ${w.extra ? `<div class="muted small">${esc(w.extra)}</div>` : ""}
-        ${w.synonyms?.length ? `<div class="small">비슷한 말: ${w.synonyms.map(esc).join(", ")}</div>` : ""}
+        ${w.synonyms?.length ? `<div class="syns small"><span class="tag">비슷한 말</span> ${w.synonyms.map((s) => synLabel(w, s)).join(" · ")}</div>` : ""}
         ${ctx ? `<div class="ex ctx"><div class="tag">오늘 지문</div>${ctx}</div>` : ""}
         ${hasSenses(w)
           ? `<div class="senses"><div class="tag">뜻이 여러 개예요 · 뜻마다 예문으로 익히세요</div>
@@ -533,17 +533,32 @@ function card(w, label, isReview = false) {
 }
 
 /** The sentence from a passage that holds this word, with the word bold. */
-function contextOf(w) {
-  for (const pid of S.set.passage_ids) {
-    const pw = S.passageById[pid]?.words.find((x) => x.id === w.id);
-    if (pw?.context) return showEx(pw.context);
-  }
-  return "";
+/** "honor 영광, 명예": a synonym with its meaning (when the content has one). */
+function synLabel(w, s) {
+  const ko = w.syn_ko?.[s];
+  return `<b>${esc(s)}</b>${ko ? ` <span class="muted">${esc(ko)}</span>` : ""}`;
 }
+
+function contextOf(w) {
+  const raw = contextRaw(w);
+  return raw ? showEx(raw) : "";
+}
+/** The line of today's passages that holds the word, with the word in [ ]. */
 function contextRaw(w) {
   for (const pid of S.set.passage_ids) {
     const pw = S.passageById[pid]?.words.find((x) => x.id === w.id);
     if (pw?.context) return pw.context;
+  }
+  // Words from the 수능 1000 bank have no stored line: look for a short sentence that holds them.
+  const re = new RegExp(`(?<![A-Za-z])${w.word.replace(/[^A-Za-z' -]/g, "")}(s|es|d|ed|ing|ly)?(?![A-Za-z])`, "i");
+  for (const pid of S.set.passage_ids) {
+    const p = S.passageById[pid];
+    if (!p) continue;
+    const text = `${p.box || ""}\n${p.body}`.replace(/\{\/?u\}/g, "").replace(/\(\s*[①②③④⑤]\s*\)|[①②③④⑤]/g, "").replace(/ {2,}/g, " ");
+    for (const sent of text.split(/\n|(?<=[.!?”"])\s+(?=[A-Z“"(])/)) {
+      const m = sent.match(re);
+      if (m && sent.length <= 220) return sent.slice(0, m.index) + "[" + m[0] + "]" + sent.slice(m.index + m[0].length);
+    }
   }
   return null;
 }
@@ -813,9 +828,10 @@ function explainChoice(kind, w, options, picked, ok, ex0, answer = w.id) {
         const s = w.senses[Number(o.v)];
         why = `<span><b>${esc(s.m)}</b>${right ? " ← 이 문장의 뜻" : ""}<br><span class="small">${showEx(s.en)} · ${esc(s.ko)}</span></span>`;
       } else if (kind === "synonym") {
+        const ko = x.syn_ko?.[o.t];
         why = right
-          ? `<b>${esc(o.t)}</b> ≈ <b>${esc(w.word)}</b> : 둘 다 '${esc(w.meaning)}'라는 뜻이에요.`
-          : `<b>${esc(o.t)}</b>는 <b>${esc(x.word)}</b> '${esc(x.meaning)}'와 비슷한 말이라 ${esc(w.word)}와 뜻이 달라요.`;
+          ? `<b>${esc(o.t)}</b>${ko ? ` '${esc(ko)}'` : ""} ≈ <b>${esc(w.word)}</b> '${esc(w.meaning)}' : 뜻이 비슷해요.`
+          : `<b>${esc(o.t)}</b>${ko ? ` '${esc(ko)}'` : ""} → <b>${esc(x.word)}</b> '${esc(x.meaning)}'와 비슷한 말이라 ${esc(w.word)}와 뜻이 달라요.`;
       } else if (kind === "word") {
         why = right
           ? `<b>${esc(x.word)}</b> = ${esc(x.meaning)}`
