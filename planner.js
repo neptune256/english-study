@@ -102,14 +102,33 @@ export function planDay({ day, state, passages, words, progress, events, usedPas
       }
   // Relearn: up to 8 older words the student is losing go through the full drill again.
   const relearnIds = pickRelearn({ day, progress, events, wordById });
+  // Passage key words first: most important, then 수능 기출 1000 words, then closest to the word level.
+  const csat = (id) => (wordById[id].csat ? 1 : 0);
+  const slots = WORDS_PER_DAY - relearnIds.length;
   const newIds = [...cand.values()]
     .sort(
       (a, b) =>
         b.importance - a.importance ||
+        csat(b.id) - csat(a.id) ||
         Math.abs(wordById[a.id].level - state.word_level) - Math.abs(wordById[b.id].level - state.word_level)
     )
-    .slice(0, WORDS_PER_DAY - relearnIds.length)
+    .slice(0, slots)
     .map((w) => w.id);
+  // Not enough new key words: fill from the 수능 기출 1000 bank — words that appear in today's
+  // passages first, then in list order.
+  if (newIds.length < slots) {
+    const text = chosen.map((p) => `${p.box || ""} ${p.body}`).join(" ").toLowerCase();
+    const inText = (w) => new RegExp(`(?<![a-z])${w.word.toLowerCase().replace(/[^a-z' -]/g, "")}(s|es|d|ed|ing|ly)?(?![a-z])`).test(text);
+    const taken = new Set([...newIds, ...relearnIds]);
+    const bank = words
+      .filter((w) => w.csat && !known.has(w.id) && !taken.has(w.id) && w.examples?.length)
+      .map((w) => ({ w, seen: inText(w) ? 0 : 1 }))
+      .sort((a, b) => a.seen - b.seen || a.w.csat - b.w.csat);
+    for (const { w } of bank) {
+      if (newIds.length >= slots) break;
+      newIds.push(w.id);
+    }
+  }
   // Spread relearn words evenly between new ones so every group of 5 gets some.
   const wordIds = [];
   const total = newIds.length + relearnIds.length;
