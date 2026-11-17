@@ -89,6 +89,18 @@
 .m-kpi .l { color: var(--muted); font-size: 14px; }
 .m-peek { margin-top: 10px; }
 
+/* 해설 */
+.m-sol-btn { width: 100%; margin: 6px 0; }
+.m-sol { background: var(--card); border: 1px solid var(--line); border-left: 4px solid var(--accent); border-radius: 12px;
+  padding: 12px 16px; margin: 8px 0 12px; font-size: 16px; line-height: 1.75; overflow-x: auto; }
+.m-sol-idea { background: var(--accent-soft); border-radius: 8px; padding: 6px 10px; margin-bottom: 8px; }
+.m-sol-idea b { color: var(--accent); margin-right: 4px; }
+.m-sol-steps { margin: 4px 0 8px; padding-left: 22px; }
+.m-sol-steps li { margin-bottom: 6px; }
+.m-sol-ans { font-weight: 600; }
+.m-sol .katex { font-size: 1.05em; }
+.m-sol .katex-display { margin: 6px 0; overflow-x: auto; overflow-y: hidden; }
+
 /* 오늘의 5문제 */
 .m-daily { border: 1.5px solid var(--accent); }
 .m-daily h2 { font-size: 22px; }
