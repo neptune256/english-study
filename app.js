@@ -6,20 +6,20 @@ const $app = document.getElementById("app");
 const DAY = new URLSearchParams(location.search).get("day") || today(); // ?day= for testing
 
 // Stages every new word goes through, in order (10 words per group, 2 groups a day):
-// learn → recall → match → fill the blank → pick the sentence that uses it right, and for words
-// with several important meanings, one question per meaning. A wrong answer sends the item to the
-// back of that stage's queue, so a stage ends only when every item is answered right.
-// After both groups, a mixed final check (listening, synonym, usage) brings all of today's words
-// back once; a word missed there comes back one more time only.
+// learn → recall → match → fill the blank, and for words with several important meanings, one
+// question per meaning. A wrong answer sends the item to the back of that stage's queue, so a
+// stage ends only when every item is answered right.
+// After both groups, a mixed final check (listening, synonym, word choice) brings all of today's
+// words back once; a word missed there comes back one more time only.
+// The harder "find the awkward sentence" question (usage) is kept for review sessions only.
 const STAGES = [
   { key: "card", label: "익히기" },
   { key: "recall", label: "떠올리기" },
   { key: "match", label: "짝 맞추기" },
   { key: "cloze", label: "빈칸 채우기" },
-  { key: "usage", label: "바른 문장 고르기" },
   { key: "sense", label: "여러 뜻 구별" }, // only words that have senses
 ];
-const FINAL_KINDS = ["listen", "synonym", "usage"]; // mixed retrieval for the final check
+const FINAL_KINDS = ["listen", "synonym", "word"]; // mixed retrieval for the final check
 const GROUP = 10;
 const MATCH_SIZE = 5; // pairs per matching board
 const hasSenses = (w) => (w.senses || []).length >= 2;
@@ -533,6 +533,25 @@ function card(w, label, isReview = false) {
 }
 
 /** The sentence from a passage that holds this word, with the word bold. */
+/** Word w in the same inflection as `surface` (a form of `base`): -s, -ed, -ing, or as is. */
+function inflectLike(w, surface, base) {
+  const s = surface.toLowerCase(), b = base.toLowerCase(), word = w.word;
+  if (s === b || word.includes(" ")) return word;
+  const own = [...w.examples, ...(w.senses || [])].map((e) => surfaceOf(e.en)).filter(Boolean);
+  const pick = (re) => own.find((f) => re.test(f) && f.toLowerCase() !== word.toLowerCase());
+  const make = (suf) => {
+    if (suf === "s") return /(s|sh|ch|x|z)$/.test(word) ? word + "es" : /[^aeiou]y$/.test(word) ? word.slice(0, -1) + "ies" : word + "s";
+    const stem = /e$/.test(word) ? word.slice(0, -1) : /[^aeiou]y$/.test(word) && suf === "ed" ? word.slice(0, -1) + "i" : word;
+    return stem + suf;
+  };
+  // Only add an ending this word can really take (no made-up forms like "capabled").
+  const verb = /동사/.test(w.pos), noun = /명사/.test(w.pos);
+  if (verb && /ing$/.test(s) && !/ing$/.test(b)) return pick(/ing$/) || make("ing");
+  if (verb && /ed$/.test(s) && !/ed$/.test(b)) return pick(/ed$/) || make("ed");
+  if ((verb || noun) && /s$/.test(s) && !/s$/.test(b)) return pick(/s$/) || make("s");
+  return word;
+}
+
 /** "honor 영광, 명예": a synonym with its meaning (when the content has one). */
 function synLabel(w, s) {
   const ko = w.syn_ko?.[s];
@@ -679,47 +698,70 @@ function ask(kind, w, label, pool, senseIdx) {
       tap("#yes", () => resolve(true));
       tap("#no", () => resolve(false)); // the meaning is already on screen; it comes back later
     } else if (mode === "usage") {
-      // Four sentences that all use this word; only one uses it correctly. The other three are
-      // other words' example sentences with this word put in their place.
+      // Up to three sentences that use this word correctly (its examples, its sense examples,
+      // the passage line) and one that is another word's example with this word forced in.
+      // The student picks the awkward one. (Review sessions only.)
+      // Skip near-copies (an example and a sense example often differ by one word).
+      const bag = (s) => new Set(s.toLowerCase().replace(/[^a-z ]/g, " ").split(/\s+/).filter((t) => t.length > 3));
+      const alike = (a, b) => {
+        const A = bag(a), B = bag(b);
+        const common = [...A].filter((t) => B.has(t)).length;
+        return common / Math.max(1, Math.min(A.size, B.size)) >= 0.6;
+      };
+      const goods = [];
+      for (const g of shuffle([...(w.senses || []), ...w.examples, ...(contextRaw(w) ? [{ en: contextRaw(w), ko: "" }] : [])]))
+        if (g?.en && goods.length < 3 && !goods.some((x) => alike(x.en, g.en))) goods.push(g);
       const syns = new Set((w.synonyms || []).map((s) => s.toLowerCase()));
-      const fakes = others(w, 30, S.words)
-        .filter((x) => !syns.has(x.word.toLowerCase()) && !(x.synonyms || []).some((s) => s.toLowerCase() === w.word.toLowerCase()))
-        .slice(0, 3);
-      const good = w.senses?.length ? w.senses[Math.floor(Math.random() * w.senses.length)] : ex1;
+      const fit = shuffle(S.words.filter(
+        (x) => x.id !== w.id && x.examples?.[0] && !syns.has(x.word.toLowerCase()) && !(x.synonyms || []).some((s) => s.toLowerCase() === w.word.toLowerCase())
+      ));
+      // A word with no part of speech in common makes the wrong sentence clearly wrong, not arguable.
+      const posSet = (x) => new Set((x.pos || "").split(/[·/,\s]+/).filter(Boolean));
+      const mine = posSet(w);
+      const fake = fit.find((x) => ![...posSet(x)].some((p) => mine.has(p))) || fit[0];
+      // Put this word in with the ending the slot needs (-s, -ed, -ing), so grammar gives nothing away.
+      const fakeSurface = surfaceOf(fake.examples[0].en) || fake.word;
+      const form = inflectLike(w, fakeSurface, fake.word);
       const opts = shuffle([
-        { v: "ok", en: good.en, ko: good.ko },
-        // same word form in every sentence, so the form itself gives nothing away
-        ...fakes.map((x) => ({ v: x.id, en: x.examples[0].en.replace(/\[[^\]]+\]/, `[${surfaceOf(good.en) || w.word}]`), x })),
+        ...goods.map((g, i) => ({ v: "ok" + i, en: g.en, ko: g.ko })),
+        {
+          v: "bad",
+          en: fake.examples[0].en
+            .replace(/\[[^\]]+\]/, `[${form}]`)
+            .replace(/\b([Aa])n? \[/, (_, a) => `${a}${/^[aeiou]/i.test(form) ? "n" : ""} [`), // a / an
+          x: fake,
+        },
       ]);
-      window.__quiz.good = "ok";
+      window.__quiz.good = "bad";
       screen(`
         <div class="bar"><span>${label}</span></div>
         <div class="card q">
           <div class="q-word">${esc(w.word)}</div>
-          <div class="muted">이 단어가 <b>바르게</b> 쓰인 문장을 고르세요</div>
+          <div class="muted">${esc(w.meaning)}</div>
+          <div class="muted">이 단어가 <b>어색하게</b> 쓰인 문장 하나를 고르세요</div>
         </div>
         <div class="options">${opts.map((o, i) => `<button class="opt sent" data-v="${esc(o.v)}"><span class="n">${i + 1}</span><span>${showEx(o.en)}</span></button>`).join("")}</div>
         <div id="fb"></div>`);
       tap(".opt.sent", async (el) => {
         if (el.disabled) return;
         answered();
-        const ok = el.dataset.v === "ok";
+        const ok = el.dataset.v === "bad";
         $app.querySelectorAll(".opt.sent").forEach((b) => {
           b.disabled = true;
-          if (b.dataset.v === "ok") b.classList.add("right");
+          if (b.dataset.v === "bad") b.classList.add("right");
         });
         if (!ok) el.classList.add("wrong");
         const head = `<div class="ex-head"><b>${esc(w.word)}</b> <span class="muted small">${esc(w.pos)}</span> = ${esc(w.meaning)}</div>`;
         const lines = opts.map((o, i) => {
           const mine = o.v === el.dataset.v;
-          const why = o.v === "ok"
-            ? `${i + 1}번이 바르게 쓰인 문장이에요.<br><span class="small">${esc(o.ko)}</span>`
-            : `${i + 1}번은 어색해요. 원래 <b>${esc(o.x.word)}</b> '${esc(o.x.meaning)}' 자리예요.<br><span class="small">${showEx(o.x.examples[0].en)} · ${esc(o.x.examples[0].ko)}</span>`;
-          return `<li class="${o.v === "ok" ? "o" : mine ? "x" : ""}"><span class="mk">${o.v === "ok" ? "✓" : mine ? "✗" : "·"}</span><span>${why}</span></li>`;
+          const why = o.v === "bad"
+            ? `${i + 1}번이 어색한 문장이에요. 원래 <b>${esc(o.x.word)}</b> '${esc(o.x.meaning)}' 자리예요.<br><span class="small">${showEx(o.x.examples[0].en)} · ${esc(o.x.examples[0].ko)}</span>`
+            : `${i + 1}번은 바르게 쓰였어요.<br><span class="small">${o.ko ? esc(o.ko) : "오늘 지문에 나온 문장이에요."}</span>`;
+          return `<li class="${o.v === "bad" ? "o" : mine ? "x" : ""}"><span class="mk">${o.v === "bad" ? "✓" : mine ? "✗" : "·"}</span><span>${why}</span></li>`;
         });
         const fb = $app.querySelector("#fb");
         fb.innerHTML = `
-          <div class="fb ${ok ? "good" : "bad"}">${ok ? "정답!" : "오답"}${ok ? "" : `<div class="small">이 단어는 잠시 뒤에 다시 나와요.</div>`}</div>
+          <div class="fb ${ok ? "good" : "bad"}">${ok ? "정답!" : "오답"}${ok ? "" : `<div class="small">이 단어는 복습 간격이 짧아져서 곧 다시 나와요.</div>`}</div>
           <div class="card explain">${head}<ul class="why">${lines.join("")}</ul></div>
           <button class="btn big primary" id="next">다음</button>`;
         speak(w.word);
