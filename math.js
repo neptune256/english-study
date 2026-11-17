@@ -2,9 +2,10 @@
 // 단원 골라 풀기와 시험지 한 번에 풀기(모의고사)도 있습니다.
 import {
   mdb, today, REMOTE, addToReview, afterReview, isDue, UNITS, SUBJECTS, unitName,
-  CIRCLED, showAnswer, EXAM_MINUTES, GRADUATED,
+  CIRCLED, showAnswer, EXAM_MINUTES, GRADUATED, renderSolution,
 } from "./math-data.js";
 import { planDaily, dailyOf, pickNew, currentLevel, nextLevel, streak, tier, TIER_NAME, DAILY_COUNT } from "./math-plan.js";
+import { mountPicker } from "./math-pick.js";
 
 const $app = document.getElementById("app");
 const DAY = new URLSearchParams(location.search).get("day") || today(); // ?day= for testing
@@ -43,15 +44,16 @@ function fail(err) {
 async function load() {
   screen(`<div class="center muted">불러오는 중…</div>`);
   try {
-    const [exams, problems, sessions, attempts, review] = await Promise.all([
+    const [exams, problems, sessions, attempts, review, solved] = await Promise.all([
       mdb.exams(), mdb.problems(), mdb.sessions(), mdb.attempts(), mdb.review(),
+      mdb.solutionIds().catch(() => []), // no solutions table yet → plan without preference
     ]);
-    S = { exams, problems, sessions, attempts, review };
+    S = { exams, problems, sessions, attempts, review, solved: new Set(solved) };
     S.examById = Object.fromEntries(exams.map((e) => [e.id, e]));
     S.byId = Object.fromEntries(problems.map((p) => [p.id, p]));
     S.reviewById = Object.fromEntries(review.map((r) => [r.problem_id, r]));
     if (!dailyOf(S.sessions, DAY)) {
-      const plan = planDaily({ ...S, day: DAY });
+      const plan = planDaily({ ...S, day: DAY, prefer: S.solved });
       if (plan.draft.ids.length) {
         await mdb.saveSession(plan);
         S.sessions.unshift(plan);
@@ -142,7 +144,7 @@ function home() {
   });
 
   const recent = S.sessions.filter((s) => s.finished_at).slice(0, 7).map((s) => {
-    const what = s.mode === "daily" ? "오늘의 5문제" : s.mode === "exam" ? examLabel(s.exam) : s.mode === "unit" ? `단원 · ${unitName(s.unit)}` : "오답 복습";
+    const what = s.mode === "daily" ? "오늘의 5문제" : s.mode === "exam" ? examLabel(s.exam) : s.mode === "unit" ? `골라 풀기 · ${(s.unit || "").split(",").map(unitName).join(" · ")}` : "오답 복습";
     return `<tr${s.mode === "exam" ? ` class="click" data-result="${esc(s.id)}"` : ""}>
       <td>${md(s.day)}</td><td>${esc(what)}</td>
       <td>${s.n_correct}/${s.n_total}${s.mode === "exam" ? ` · <b>${s.score}점</b>` : ""}</td><td class="muted">${mins(s.ms)}</td></tr>`;
@@ -163,8 +165,8 @@ function home() {
 
     <p class="muted small m-review-line">오답 노트: 다시 풀 날 기다리는 문제 ${waiting}개 · 졸업 ${graduated}개${extraDue.length ? ` · <b>오늘 더 풀 수 있는 오답 ${extraDue.length}개</b> <button class="btn small-btn" id="go-review">오답만 풀기</button>` : ""}</p>
 
-    <h2 class="m-h2">단원 골라 풀기 <span class="muted small">한 단원에서 ${UNIT_SET}문제</span></h2>
-    <div class="m-units">${unitCards.join("")}</div>
+    <h2 class="m-h2">골라서 풀기 <span class="muted small">단원과 난이도를 직접 고르거나 추천대로</span></h2>
+    <section class="card" id="m-pick"></section>
 
     ${recent.length ? `<h2 class="m-h2">최근 기록</h2><div class="m-tbl"><table>${recent.join("")}</table></div>` : ""}
 
@@ -181,6 +183,10 @@ function home() {
   tap("[data-exam]", (b) => (draft && draft.exam === b.dataset.exam ? examRun(draft) : confirmExam(b.dataset.exam, draft)));
   tap("[data-result]", (b) => examResult(S.sessions.find((s) => s.id === b.dataset.result)));
   tap("[data-unit]", (b) => startUnit(b.dataset.unit));
+  mountPicker($app.querySelector("#m-pick"), {
+    ...S, day: DAY, prefer: S.solved,
+    onStart: (list, title, units) => runQueue("unit", list, units, title),
+  });
 }
 
 // ───────────── problem card ─────────────
@@ -223,7 +229,7 @@ async function startDaily(extra) {
   const d = s.draft;
   d.bonus ||= [];
   if (extra) {
-    const [p] = pickNew({ ...S, byId: S.byId, level: d.level_after ?? d.level, day: DAY, taken: [...d.ids, ...d.bonus], count: 1 });
+    const [p] = pickNew({ ...S, byId: S.byId, level: d.level_after ?? d.level, day: DAY, taken: [...d.ids, ...d.bonus], count: 1, prefer: S.solved });
     if (!p) {
       screen(`<div class="card"><p>더 풀 새 문제가 없어요!</p><button class="btn primary big" id="home">처음으로</button></div>`);
       return tap("#home", home);
@@ -363,11 +369,18 @@ function solve({ title, mode, session, list, counter, isReview, onAnswer, onFini
         $check.disabled = false;
       }
       const fb = $app.querySelector("#fb");
-      const next = () => {
+      const next = (openSolution) => {
         $check.dataset.locked = "1";
         $check.textContent = i + 1 < list.length ? "다음 문제" : "결과 보기";
         $check.disabled = false;
         $check.onclick = () => show(i + 1);
+        fb.insertAdjacentHTML("beforeend", `<button class="btn m-sol-btn" id="sol-btn">풀이 보기</button><div id="sol"></div>`);
+        const open = () => {
+          $app.querySelector("#sol-btn")?.remove();
+          renderSolution($app.querySelector("#sol"), p);
+        };
+        $app.querySelector("#sol-btn").addEventListener("click", open);
+        if (openSolution) open();
       };
       if (correct) {
         const rv = S.reviewById[p.id];
@@ -385,8 +398,8 @@ function solve({ title, mode, session, list, counter, isReview, onAnswer, onFini
         reveal();
       }
       function reveal() {
-        fb.innerHTML = `<p class="m-fb bad">정답은 <b>${showAnswer(p, p.answer)}</b>이에요. 2일 뒤 다시 나와요.</p>`;
-        next();
+        fb.innerHTML = `<p class="m-fb bad">정답은 <b>${showAnswer(p, p.answer)}</b>이에요. 풀이를 읽고, 2일 뒤 다시 풀어 봐요.</p>`;
+        next(true);
       }
     });
   };
@@ -399,7 +412,8 @@ function startUnit(unit) {
   const level = currentLevel(S.sessions);
   const pool = S.problems.filter((p) => p.unit === unit && !tried.has(p.id));
   // closest to the student's level first, then easier ones
-  pool.sort((a, b) => Math.abs(tier(a) - level) - Math.abs(tier(b) - level) || tier(a) - tier(b) || Math.random() - 0.5);
+  const sol = (p) => (S.solved.has(p.id) ? 0 : 1); // problems with a solution first
+  pool.sort((a, b) => sol(a) - sol(b) || Math.abs(tier(a) - level) - Math.abs(tier(b) - level) || tier(a) - tier(b) || Math.random() - 0.5);
   const pick = pool.slice(0, UNIT_SET).sort((a, b) => tier(a) - tier(b));
   if (!pick.length) {
     screen(`<div class="card"><h2>${esc(unitName(unit))}</h2><p>이 단원의 기출을 모두 풀었어요! 틀린 문제는 오답 복습에서 다시 나와요.</p>
@@ -410,7 +424,7 @@ function startUnit(unit) {
   runQueue("unit", pick, unit);
 }
 
-async function runQueue(mode, list, unit = null) {
+async function runQueue(mode, list, unit = null, customTitle = null) {
   const session = {
     id: `${DAY}-${mode}-${Date.now()}`, day: DAY, mode, unit,
     started_at: new Date().toISOString(), draft: {},
@@ -422,7 +436,7 @@ async function runQueue(mode, list, unit = null) {
   } catch (e) {
     return fail(e);
   }
-  const title = mode === "review" ? "오답 다시 풀기" : `단원 · ${unitName(unit)}`;
+  const title = customTitle || (mode === "review" ? "오답 다시 풀기" : `단원 · ${unitName(unit)}`);
   solve({
     title, mode, session, list,
     isReview: () => mode === "review",
@@ -692,8 +706,9 @@ function peek(p, mine) {
   box.innerHTML = `<div class="card m-peek">
     <div class="m-row"><b>${p.num}번</b><button class="btn small-btn" id="close">닫기</button></div>
     ${problemHtml(p)}
-    <p>내 답 <b>${showAnswer(p, mine)}</b> · 정답 <b>${showAnswer(p, p.answer)}</b></p></div>`;
+    <p>내 답 <b>${showAnswer(p, mine)}</b> · 정답 <b>${showAnswer(p, p.answer)}</b></p><div id="peek-sol"></div></div>`;
   showImage(p);
+  renderSolution(box.querySelector("#peek-sol"), p);
   box.querySelector("#close").addEventListener("click", () => (box.innerHTML = ""));
   box.scrollIntoView({ behavior: "smooth", block: "start" });
 }
