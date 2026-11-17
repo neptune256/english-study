@@ -53,8 +53,19 @@ async function localContent() {
   return content;
 }
 
+let localSol = null;
+async function localSolutions() {
+  if (!localSol) {
+    localSol = fetch("../math/content/solutions.json", { cache: "no-store" })
+      .then((r) => (r.ok ? r.json() : {}))
+      .catch(() => ({}));
+  }
+  return localSol;
+}
+
 // ───────────── public API ─────────────
 const imageCache = new Map();
+const solutionCache = new Map();
 export const mdb = {
   async exams() {
     return REMOTE ? rest("GET", "math_exams?select=*&order=held_on") : (await localContent()).exams;
@@ -90,6 +101,20 @@ export const mdb = {
     if (!rows.length) return;
     rows = rows.map((r) => ({ ...r, updated_at: new Date().toISOString() }));
     return REMOTE ? upsert("math_review", rows) : upsertLocal("review", rows, "problem_id");
+  },
+  /** Ids of problems that have a written solution. */
+  async solutionIds() {
+    if (REMOTE) return (await rest("GET", "math_solutions?select=problem_id&limit=5000")).map((r) => r.problem_id);
+    return Object.keys(await localSolutions());
+  },
+  /** One solution {idea, steps[], answer} or null. */
+  async solution(id) {
+    if (!solutionCache.has(id)) {
+      solutionCache.set(id, REMOTE
+        ? rest("GET", `math_solutions?problem_id=eq.${encodeURIComponent(id)}&select=*`).then((r) => r[0] || null)
+        : localSolutions().then((all) => all[id] || null));
+    }
+    return solutionCache.get(id);
   },
   /** URL for a problem image (a blob: URL from the private bucket when remote). */
   async imageUrl(path) {
@@ -162,3 +187,40 @@ export const unitName = (u) => (UNITS.find((x) => x[0] === u) || [, , u])[2];
 export const CIRCLED = ["①", "②", "③", "④", "⑤"];
 export const showAnswer = (p, a) => (a === null || a === undefined ? "–" : p.is_choice ? CIRCLED[a - 1] || a : String(a));
 export const EXAM_MINUTES = 100;
+
+// ───────────── solution display ─────────────
+const escHtml = (s) =>
+  String(s ?? "").replace(/[&<>"']/g, (c) => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;" })[c]);
+
+/** Fill `box` with the solution of problem `p` (KaTeX for $...$). */
+export async function renderSolution(box, p) {
+  box.innerHTML = `<div class="m-sol muted small">풀이 불러오는 중…</div>`;
+  let sol = null;
+  try {
+    sol = await mdb.solution(p.id);
+  } catch {
+    /* shown as missing below */
+  }
+  if (!sol) {
+    box.innerHTML = `<div class="m-sol"><p class="muted">이 문제는 아직 해설이 없어요. 정답은 <b>${showAnswer(p, p.answer)}</b>예요.</p></div>`;
+    return;
+  }
+  box.innerHTML = `<div class="m-sol">
+    <div class="m-sol-idea"><b>핵심</b> ${escHtml(sol.idea)}</div>
+    <ol class="m-sol-steps">${sol.steps.map((s) => `<li>${escHtml(s)}</li>`).join("")}</ol>
+    <div class="m-sol-ans">따라서 정답은 <b>${showAnswer(p, p.answer)}</b></div>
+    <p class="muted small">Claude가 직접 풀어서 쓴 해설이에요. 이해가 안 되는 부분은 선생님께 물어보세요.</p>
+  </div>`;
+  renderMath(box);
+}
+
+export function renderMath(el, tries = 0) {
+  if (window.renderMathInElement) {
+    window.renderMathInElement(el, {
+      delimiters: [{ left: "$$", right: "$$", display: true }, { left: "$", right: "$", display: false }],
+      throwOnError: false,
+    });
+  } else if (tries < 20) {
+    setTimeout(() => renderMath(el, tries + 1), 150); // KaTeX still loading
+  }
+}
