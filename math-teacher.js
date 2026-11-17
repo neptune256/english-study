@@ -1,5 +1,5 @@
 // 수학 학습 대시보드 (선생님용): 실전 점수, 단원별·배점별 정답률, 오답 복습 현황.
-import { mdb, today, REMOTE, isDue, UNITS, SUBJECTS, showAnswer, GRADUATED, EXAM_MINUTES } from "./math-data.js";
+import { mdb, today, REMOTE, isDue, UNITS, SUBJECTS, showAnswer, GRADUATED, EXAM_MINUTES, renderSolution } from "./math-data.js";
 import { currentLevel, streak, tier, TIER_NAME } from "./math-plan.js";
 
 const DAY = new URLSearchParams(location.search).get("day") || today();
@@ -195,7 +195,8 @@ async function peek(p) {
   box.innerHTML = `<div class="card" style="margin-top:12px">
     <div class="top" style="margin-bottom:8px"><b>${src(p)} · ${p.points}점 · ${esc(p.unit_name)}</b><button class="btn" id="close">닫기</button></div>
     <div class="pimg-box"><img id="pimg" style="width:100%;display:block" alt="${src(p)}" /></div>
-    <p>정답 <b>${showAnswer(p, p.answer)}</b> · 학생 답: ${tries.map((a) => `${md(a.day)} ${showAnswer(p, a.answer)}${a.correct ? " O" : " X"}`).join(", ") || "–"}</p></div>`;
+    <p>정답 <b>${showAnswer(p, p.answer)}</b> · 학생 답: ${tries.map((a) => `${md(a.day)} ${showAnswer(p, a.answer)}${a.correct ? " O" : " X"}`).join(", ") || "–"}</p><div id="peek-sol" style="max-width:720px"></div></div>`;
+  renderSolution(box.querySelector("#peek-sol"), p);
   box.querySelector("#close").addEventListener("click", () => (box.innerHTML = ""));
   box.scrollIntoView({ behavior: "smooth", block: "start" });
   try {
