@@ -11,7 +11,7 @@ const esc = (s) =>
 const CIRCLED = ["①", "②", "③", "④", "⑤"];
 const pct = (a, b) => (b ? Math.round((100 * a) / b) + "%" : "–");
 const STAGE_KO = {
-  recall: "떠올리기", match: "짝 맞추기", listen: "듣고 뜻", synonym: "유의어", usage: "바른 문장", dictation: "듣고 쓰기", sense: "여러 뜻",
+  recall: "떠올리기", match: "짝 맞추기", listen: "듣고 뜻", synonym: "유의어", usage: "어색한 문장", dictation: "듣고 쓰기", sense: "여러 뜻",
   meaning: "뜻 고르기", word: "단어 고르기", cloze: "빈칸", context: "지문 속 의미", translate: "해석", spell: "철자",
 };
 const stageKo = (s) => (s?.startsWith("final:") ? "최종 점검(" + (STAGE_KO[s.slice(6)] || s.slice(6)) + ")" : STAGE_KO[s] || s);
