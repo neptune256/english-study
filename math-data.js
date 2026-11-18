@@ -192,9 +192,27 @@ export const EXAM_MINUTES = 100;
 const escHtml = (s) =>
   String(s ?? "").replace(/[&<>"']/g, (c) => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;" })[c]);
 
-/** Fill `box` with the solution of problem `p` (KaTeX for $...$). */
+/** Image path of the official 해설 for 학력평가 problems (cut per problem by math/tools/edu.py), else null. */
+export const officialSol = (p) => (p && String(p.exam).startsWith("edu-") ? `sol/${p.exam}/${p.num}.png` : null);
+
+/** Fill `box` with the solution of problem `p`: the official 해설 image when there is one,
+ *  otherwise the written solution (KaTeX for $...$). */
 export async function renderSolution(box, p) {
   box.innerHTML = `<div class="m-sol muted small">풀이 불러오는 중…</div>`;
+  const official = officialSol(p);
+  if (official) {
+    try {
+      const url = await mdb.imageUrl(official);
+      box.innerHTML = `<div class="m-sol">
+        <img class="m-sol-img" src="${url}" alt="${escHtml(p.exam)} ${p.num}번 공식 해설">
+        <div class="m-sol-ans">정답은 <b>${showAnswer(p, p.answer)}</b></div>
+        <p class="muted small">출처: 시도교육청 전국연합학력평가 공식 정답 및 해설</p>
+      </div>`;
+    } catch {
+      box.innerHTML = `<div class="m-sol"><p class="muted">해설 그림을 불러오지 못했어요. 정답은 <b>${showAnswer(p, p.answer)}</b>예요.</p></div>`;
+    }
+    return;
+  }
   let sol = null;
   try {
     sol = await mdb.solution(p.id);
