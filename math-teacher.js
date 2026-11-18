@@ -73,7 +73,7 @@ function render() {
     <h2>오답 복습 목록 <span class="muted small">틀렸거나 "헷갈려요"로 표시한 문제 · 2일 → 7일 → 21일 · 줄을 누르면 문제 보기</span></h2>
     ${reviewTable()}
     <div id="peek"></div>
-    <p class="muted small" style="margin-top:20px">문제 출처: 한국교육과정평가원. 개인 학습용.</p>`;
+    <p class="muted small" style="margin-top:20px">문제 출처: 한국교육과정평가원, 시도교육청 고3 전국연합학력평가(문제·공식 해설). 개인 학습용.</p>`;
 
   $app.querySelectorAll("tr[data-session]").forEach((tr) => tr.addEventListener("click", () => {
     $app.querySelectorAll("tr.sel").forEach((x) => x.classList.remove("sel"));
