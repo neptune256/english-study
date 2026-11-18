@@ -100,8 +100,9 @@ export function planDay({ day, state, passages, words, progress, events, usedPas
         const prev = cand.get(w.id);
         if (!prev || prev.importance < w.importance) cand.set(w.id, w);
       }
-  // Relearn: up to 8 older words the student is losing go through the full drill again.
-  const relearnIds = pickRelearn({ day, progress, events, wordById });
+  // Past words are checked only in the review step (due words, weakest first); a word missed there
+  // is shown again and comes back sooner. The daily 20 are all new words.
+  const relearnIds = [];
   // Passage key words first: most important, then 수능 기출 1000 words, then closest to the word level.
   const csat = (id) => (wordById[id].csat ? 1 : 0);
   const slots = WORDS_PER_DAY - relearnIds.length;
@@ -160,6 +161,7 @@ export function planDay({ day, state, passages, words, progress, events, usedPas
 export const RELEARN_MAX = 8;
 
 /**
+ * (No longer used by planDay: past words go to the review step instead.)
  * Older words to study again in full today, most in need first:
  *   last review answered wrong  > many lapses > low recall chance today > low first-day drill score.
  * Only words that show a need (wrong recently, lapsed before, recall under 85%, or a weak first day)
