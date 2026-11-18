@@ -261,7 +261,10 @@ function resumeNote(sum) {
   if (!p) return "";
   const st = STAGES.find((s) => s.key === p.stage);
   const groupNo = Math.floor(sum.wordsDone.length / GROUP) + 1;
-  return `<p class="muted small center">${groupNo}묶음 · ${st?.label || ""} ${p.done + 1}/${p.groupIds.length}부터 이어서 해요.</p>`;
+  // Each item is either still in the queue or done, so done + queue = the stage's question count.
+  const total = (p.done || 0) + (Array.isArray(p.queue) ? p.queue.length : 0);
+  const where = total ? ` ${(p.done || 0) + 1}/${total}` : "";
+  return `<p class="muted small center">${groupNo}묶음 · ${st?.label || ""}${where}부터 이어서 해요.</p>`;
 }
 
 const isGrammar = (id) => S.passageById[id]?.qtype === GRAMMAR;
@@ -332,7 +335,8 @@ async function vocab() {
       const st = STAGES[si];
       const resuming = pos && si === startStage;
       const save = (queue, tried, done) => {
-        sum.vocabPos = { groupIds: group.map((w) => w.id), stage: st.key, queue: queue.map((w) => w.id), tried: [...tried], done };
+        // queue holds item strings ("wordId" or "wordId#meaning"), saved as they are
+        sum.vocabPos = { groupIds: group.map((w) => w.id), stage: st.key, queue: [...queue], tried: [...tried], done };
         return saveSet();
       };
       if (st.key === "match") {
@@ -353,10 +357,13 @@ async function vocab() {
         ? group.filter(hasSenses).flatMap((w) => w.senses.map((_, i) => `${w.id}#${i}`))
         : group.map((w) => w.id);
       if (!items.length) continue;
-      const queue = resuming ? pos.queue.filter((id) => S.wordById[id.split("#")[0]]) : shuffle(items);
-      const tried = new Set(resuming ? pos.tried : []);
-      let done = resuming ? pos.done : 0;
-      if (!resuming) save(queue, tried, done);
+      // A saved queue must hold only this stage's items; anything else (e.g. a damaged save)
+      // restarts the stage instead of failing.
+      const valid = resuming && Array.isArray(pos.queue) && pos.queue.every((id) => typeof id === "string" && items.includes(id));
+      const queue = valid ? [...pos.queue] : shuffle(items);
+      const tried = new Set(valid ? pos.tried || [] : []);
+      let done = valid ? Math.min(pos.done || 0, items.length - queue.length) : 0;
+      if (!valid) save(queue, tried, done);
       while (queue.length) {
         const item = queue[0]; // stays first until answered, so a resumed session asks it again
         const [wid, senseIdx] = item.split("#");
