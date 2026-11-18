@@ -5,7 +5,24 @@
   <meta name="viewport" content="width=device-width, initial-scale=1" />
   <meta name="robots" content="noindex" />
   <title>학습 대시보드</title>
-  <link rel="stylesheet" href="style.css" />
+  <script>
+    // Always load the current code (no stale cached copies): fresh ?v= on every visit.
+    (function () {
+      var v = Date.now();
+      document.write('<link rel="stylesheet" href="style.css?v=' + v + '" />');
+      var imports = {};
+      ["db.js", "planner.js", "memory.js"].forEach(function (f) {
+        imports[new URL(f, location.href).href] = "./" + f + "?v=" + v;
+      });
+      if (HTMLScriptElement.supports && HTMLScriptElement.supports("importmap")) {
+        var m = document.createElement("script");
+        m.type = "importmap";
+        m.textContent = JSON.stringify({ imports: imports });
+        document.head.appendChild(m);
+      }
+      window.__v = v;
+    })();
+  </script>
   <style>
     #app { max-width: 1100px; }
     .kpis { display: grid; grid-template-columns: repeat(auto-fit, minmax(150px, 1fr)); gap: 10px; margin-bottom: 18px; }
@@ -68,6 +85,11 @@
 <body>
   <main id="app"><div class="center muted">불러오는 중…</div></main>
   <script src="config.js"></script>
-  <script type="module" src="teacher.js"></script>
+  <script>
+    var s = document.createElement("script");
+    s.type = "module";
+    s.src = "teacher.js?v=" + window.__v;
+    document.body.appendChild(s);
+  </script>
 </body>
 </html>
