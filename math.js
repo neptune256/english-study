@@ -1,8 +1,8 @@
-// 오늘의 수학: 평가원 기출(2028 수능 범위)을 하루 5문제씩 한 문제 단위로 풀고, 오답은 다시 풀게 합니다.
+// 오늘의 수학: 평가원 기출과 고3 학력평가(2028 수능 범위)를 하루 5문제씩 한 문제 단위로 풀고, 오답은 다시 풀게 합니다.
 // 단원 골라 풀기와 시험지 한 번에 풀기(모의고사)도 있습니다.
 import {
   mdb, today, REMOTE, addToReview, afterReview, isDue, UNITS, SUBJECTS, unitName,
-  CIRCLED, showAnswer, EXAM_MINUTES, GRADUATED, renderSolution,
+  CIRCLED, showAnswer, EXAM_MINUTES, GRADUATED, renderSolution, officialSol,
 } from "./math-data.js";
 import { planDaily, dailyOf, pickNew, currentLevel, nextLevel, streak, tier, TIER_NAME, DAILY_COUNT } from "./math-plan.js";
 import { mountPicker } from "./math-pick.js";
@@ -12,6 +12,8 @@ const DAY = new URLSearchParams(location.search).get("day") || today(); // ?day=
 const UNIT_SET = 5; // problems per unit-practice round
 const REVIEW_SET = 10; // max problems per extra review round
 const SOURCE = "한국교육과정평가원";
+const EDU_SOURCE = "시도교육청"; // 고3 전국연합학력평가 (edu-*)
+const sourceOf = (p) => (officialSol(p) ? EDU_SOURCE : SOURCE);
 
 let S; // loaded data
 
@@ -48,7 +50,8 @@ async function load() {
       mdb.exams(), mdb.problems(), mdb.sessions(), mdb.attempts(), mdb.review(),
       mdb.solutionIds().catch(() => []), // no solutions table yet → plan without preference
     ]);
-    S = { exams, problems, sessions, attempts, review, solved: new Set(solved) };
+    // "solved" = problems with a solution to show: written ones plus every 학력평가 problem (official 해설)
+    S = { exams, problems, sessions, attempts, review, solved: new Set([...solved, ...problems.filter(officialSol).map((p) => p.id)]) };
     S.examById = Object.fromEntries(exams.map((e) => [e.id, e]));
     S.byId = Object.fromEntries(problems.map((p) => [p.id, p]));
     S.reviewById = Object.fromEntries(review.map((r) => [r.problem_id, r]));
@@ -174,7 +177,7 @@ function home() {
       <summary>시험지 한 번에 풀기 (모의고사 · 30문항 ${EXAM_MINUTES}분)</summary>
       <ul class="m-exams">${examRows.join("")}</ul>
     </details>
-    <p class="muted small m-copy">문제 출처: ${SOURCE} 대학수학능력시험·모의평가·예시문항. 저작권은 ${SOURCE}에 있으며 개인 학습용으로만 사용합니다.</p>
+    <p class="muted small m-copy">문제 출처: ${SOURCE} 대학수학능력시험·모의평가·예시문항, ${EDU_SOURCE} 고3 전국연합학력평가(문제·해설). 저작권은 각 출제 기관에 있으며 개인 학습용으로만 사용합니다.</p>
   `);
   tap("#daily-go", () => startDaily(false));
   tap("#daily-more", () => startDaily(true));
@@ -193,7 +196,7 @@ function home() {
 function problemHtml(p) {
   return `<div class="m-q">
     <div class="m-q-img"><img id="qimg" alt="${esc(examLabel(p.exam))} ${p.num}번 문제" /><div class="m-q-loading muted small">문제 불러오는 중…</div></div>
-    <div class="m-q-src muted small">${srcLine(p)} · 출처: ${SOURCE}</div>
+    <div class="m-q-src muted small">${srcLine(p)} · 출처: ${sourceOf(p)}</div>
   </div>`;
 }
 async function showImage(p, next) {
