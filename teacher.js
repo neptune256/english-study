@@ -58,6 +58,7 @@ function render() {
   $app.innerHTML = `
     <header class="top"><h1>학습 대시보드</h1><span class="small"><a href="math-teacher.html${location.search}" class="muted">수학 대시보드 →</a> · <a href="index.html" class="muted">학생 화면 →</a></span></header>
     ${REMOTE ? "" : `<p class="note">로컬 테스트 모드: 이 브라우저에 저장된 기록만 보입니다.</p>`}
+    ${homeworkSection()}
     ${daysLeft <= 5 ? `<div class="alert">⚠ 새 지문이 <b>약 ${daysLeft}일분</b> 남았습니다 (예상 소진 ${runout.slice(5).replace("-", "/")}).
       컴퓨터를 켜고 Claude 앱을 열어 두면 저녁 8시 예약 작업이 자동으로 채웁니다.
       바닥나도 앱은 멈추지 않고 예전에 틀린 지문을 다시 냅니다.</div>` : ""}
@@ -95,9 +96,102 @@ function render() {
       showDay(tr.dataset.day);
     })
   );
+  // A day in the 14-day strip opens that day's detail below the date table.
+  $app.querySelectorAll(".hw-dot[data-day]").forEach((b) =>
+    b.addEventListener("click", () => {
+      if (!D.daily.some((d) => d.day === b.dataset.day)) return;
+      $app.querySelectorAll("tr.sel").forEach((x) => x.classList.remove("sel"));
+      $app.querySelector(`tr.click[data-day="${b.dataset.day}"]`)?.classList.add("sel");
+      showDay(b.dataset.day);
+      $app.querySelector("#detail")?.scrollIntoView({ behavior: "smooth", block: "start" });
+    })
+  );
   bindMastery();
   $app.querySelectorAll(".open-pdf").forEach((b) => b.addEventListener("click", (e) => { e.stopPropagation(); openPdf(b); }));
   if (D.daily.length) showDay(D.daily[0].day);
+}
+
+// ───────────── homework check (did the student do yesterday's / today's work?) ─────────────
+/** Each part of a day's work with done/total, and the day's overall status. */
+function dayWork(day) {
+  const d = D.daily.find((x) => x.day === day);
+  if (!d) return { day, opened: false, status: "none", parts: [], ms: 0 };
+  const s = d.summary || {};
+  const ev = D.events.filter((e) => e.day === day);
+  const read = s.readingDone || [];
+  const needsAnalysis = d.passage_ids.some((id) => D.passageById[id]?.qtype !== GRAMMAR);
+  const parts = [];
+  if (d.review_ids.length) {
+    const n = new Set(s.reviewsDone || []).size;
+    parts.push({ name: "복습", done: n, total: d.review_ids.length, ok: n >= d.review_ids.length });
+  }
+  if (d.word_ids.length) {
+    const n = (s.wordsDone || []).length;
+    const ok = n >= d.word_ids.length && Boolean(s.finalDone);
+    parts.push({
+      name: "단어 외우기", done: n, total: d.word_ids.length, ok,
+      note: n >= d.word_ids.length && !s.finalDone ? "최종 점검 남음" : "",
+    });
+  }
+  if (d.passage_ids.length) {
+    const correct = read.filter((r) => r.correct).length;
+    parts.push({
+      name: "독해 + 어법", done: read.length, total: d.passage_ids.length, ok: read.length >= d.passage_ids.length,
+      note: read.length ? `${correct}/${read.length} 정답` : "",
+    });
+  }
+  if (needsAnalysis) parts.push({ name: "지문 분석 PDF", done: s.analysis ? 1 : 0, total: 1, ok: Boolean(s.analysis), note: s.analysis ? "제출함" : "" });
+  const started = parts.some((p) => p.done > 0) || ev.length > 0;
+  const status = parts.every((p) => p.ok) ? "done" : started ? "part" : "none";
+  return { day, opened: true, status, parts, ms: ev.reduce((a, e) => a + (e.ms || 0), 0), analysis: s.analysis };
+}
+
+const HW_LABEL = { done: "다 했어요", part: "일부만 했어요", none: "안 했어요" };
+const HW_MARK = { done: "✓", part: "◐", none: "✗" };
+const weekday = (day) => "일월화수목금토"[new Date(day + "T00:00:00Z").getUTCDay()];
+const md = (day) => `${Number(day.slice(5, 7))}/${Number(day.slice(8))}`;
+
+function homeworkCard(day, title) {
+  const w = dayWork(day);
+  const isToday = day === DAY;
+  // Today is still going: "not yet" instead of "didn't do it".
+  const label = isToday && w.status !== "done" ? (w.status === "part" ? "하는 중" : "아직 시작 안 함") : HW_LABEL[w.status];
+  const cls = isToday && w.status !== "done" ? "wait" : w.status;
+  return `<div class="hw-card hw-${cls}">
+    <div class="hw-head">
+      <div><div class="hw-title">${title}</div><div class="muted small">${md(day)} (${weekday(day)})</div></div>
+      <div class="hw-badge">${isToday && w.status === "none" ? "·" : HW_MARK[w.status]} ${label}</div>
+    </div>
+    ${w.opened
+      ? `<ul class="hw-parts">${w.parts.map((p) => `
+          <li class="${p.ok ? "ok" : p.done ? "half" : isToday ? "todo" : "no"}">
+            <span class="hw-mk">${p.ok ? "✓" : p.done ? "◐" : isToday ? "·" : "✗"}</span>
+            <span class="hw-name">${p.name}</span>
+            <span class="hw-num">${p.total > 1 ? `${p.done}/${p.total}` : ""}${p.note ? ` <span class="muted small">${p.note}</span>` : ""}</span>
+            ${p.name === "지문 분석 PDF" && w.analysis ? `<button class="btn open-pdf" data-path="${esc(w.analysis.path)}">PDF 열기</button>` : ""}
+          </li>`).join("")}</ul>
+         <div class="muted small">공부한 시간 약 ${w.ms ? mins(w.ms) : "0분"}</div>`
+      : `<p class="muted">${isToday ? "오늘은 아직 앱을 열지 않았어요." : "이날은 앱을 열지 않았어요."}</p>`}
+  </div>`;
+}
+
+function homeworkSection() {
+  const days = Array.from({ length: 14 }, (_, i) => addDays(DAY, i - 13));
+  const firstDay = D.daily.map((d) => d.day).sort()[0] || DAY; // before this the app wasn't in use
+  const dots = days.map((day) => {
+    const w = dayWork(day);
+    const pre = day < firstDay;
+    const cls = pre ? "pre" : day === DAY && w.status !== "done" ? "wait" : w.status;
+    const tip = pre ? "시작 전" : day === DAY && w.status !== "done" ? "오늘 · 진행 중" : HW_LABEL[w.status];
+    return `<button class="hw-dot hw-${cls}" ${w.opened ? `data-day="${day}"` : ""} title="${md(day)} ${tip}">
+      <span class="hw-dm">${pre ? "–" : day === DAY && w.status === "none" ? "·" : HW_MARK[w.status]}</span><span class="hw-dd">${md(day)}</span><span class="hw-dw">${weekday(day)}</span></button>`;
+  });
+  const last7 = days.slice(6, 13).filter((d) => d >= firstDay).map(dayWork); // up to 7 days before today
+  const full = last7.filter((w) => w.status === "done").length;
+  return `<h2 style="margin-top:6px">과제 확인</h2>
+    <div class="hw-grid">${homeworkCard(addDays(DAY, -1), "어제")}${homeworkCard(DAY, "오늘")}</div>
+    <div class="hw-strip-head muted small">최근 2주 · 지난 ${last7.length}일 중 <b>${full}일</b> 다 했어요 · 날짜를 누르면 그날 기록이 아래에 열립니다</div>
+    <div class="hw-strip">${dots.join("")}</div>`;
 }
 
 function stockSection(unused, poolLeft, grammarLeft, daysLeft, runout) {
