@@ -98,6 +98,7 @@
 .m-sol-steps { margin: 4px 0 8px; padding-left: 22px; }
 .m-sol-steps li { margin-bottom: 6px; }
 .m-sol-ans { font-weight: 600; }
+.m-sol-img { display: block; width: 100%; max-width: 680px; height: auto; margin: 0 auto 8px; background: #fff; border-radius: 6px; }
 .m-sol .katex { font-size: 1.05em; }
 .m-sol .katex-display { margin: 6px 0; overflow-x: auto; overflow-y: hidden; }
 
