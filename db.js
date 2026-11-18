@@ -31,6 +31,15 @@ async function rest(method, path, body, prefer) {
   if (!res.ok) throw new Error(`${method} ${path} → ${res.status} ${await res.text()}`);
   return res.status === 204 || method !== "GET" ? null : res.json();
 }
+// Supabase returns at most 1000 rows per request: read big tables page by page.
+async function restAll(path, page = 1000) {
+  const out = [];
+  for (let offset = 0; ; offset += page) {
+    const rows = await rest("GET", `${path}&limit=${page}&offset=${offset}`);
+    out.push(...rows);
+    if (rows.length < page) return out;
+  }
+}
 const upsert = (table, rows) =>
   rest("POST", table, rows, "resolution=merge-duplicates,return=minimal");
 
@@ -69,10 +78,10 @@ function upsertLocal(key, rows, pk) {
 // ───────────── Public API ─────────────
 export const db = {
   async passages() {
-    return REMOTE ? rest("GET", "passages?select=*&order=id") : (await localBundle()).passages;
+    return REMOTE ? restAll("passages?select=*&order=id") : (await localBundle()).passages;
   },
   async words() {
-    return REMOTE ? rest("GET", "words?select=*") : (await localBundle()).words;
+    return REMOTE ? restAll("words?select=*&order=id") : (await localBundle()).words;
   },
   async state() {
     if (REMOTE) return (await rest("GET", "student_state?id=eq.1&select=*"))[0];
@@ -94,7 +103,7 @@ export const db = {
     return REMOTE ? upsert("daily_sets", [set]) : upsertLocal("daily", [set], "day");
   },
   async progress() {
-    return REMOTE ? rest("GET", "word_progress?select=*") : lsGet("progress", []);
+    return REMOTE ? restAll("word_progress?select=*&order=word_id") : lsGet("progress", []);
   },
   async saveProgress(rows) {
     if (!rows.length) return;
@@ -111,7 +120,7 @@ export const db = {
   },
   /** All events, or only one day's when `day` is given. */
   async events(day) {
-    if (REMOTE) return rest("GET", `events?select=*${day ? `&day=eq.${day}` : ""}&order=at`);
+    if (REMOTE) return restAll(`events?select=*${day ? `&day=eq.${day}` : ""}&order=at,id`);
     const all = lsGet("events", []);
     return day ? all.filter((e) => e.day === day) : all;
   },
