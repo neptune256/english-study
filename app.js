@@ -76,7 +76,7 @@ async function load() {
   const [words, passages, progress, state, allDaily, events] = await Promise.all([
     db.words(), db.passages(), db.progress(), db.state(), db.allDaily(), db.events(),
   ]);
-  S = { words, passages, progress, state, events };
+  S = { words, passages, progress, state, events, allDaily };
   S.wordById = Object.fromEntries(words.map((w) => [w.id, w]));
   S.passageById = Object.fromEntries(passages.map((p) => [p.id, p]));
   S.progressById = Object.fromEntries(progress.map((p) => [p.word_id, p]));
@@ -120,9 +120,10 @@ function home() {
       <div><div class="step-title">${title}</div><div class="muted small">${detail}</div></div>
     </li>`;
   const analysisLeft = s.passage_ids.some((id) => !isGrammar(id)) && !sum.analysis ? 1 : 0;
-  // Saturday: the weekly word test comes right after the review (if there are words to test).
-  const testOn = isTestDay() && (sum.weekly || weeklyPick().length);
-  const testLeft = testOn && !sum.weekly?.done ? 1 : 0;
+  // Weekend: the weekly word test comes right after the review, until it is finished.
+  const testOn = testOpen();
+  const T = testOn ? testHost()?.summary.weekly : null; // started, not finished
+  const testLeft = testOn ? 1 : 0;
   const next = reviewsLeft ? "review" : testLeft ? "test" : wordsLeft ? "vocab" : readLeft ? "reading" : analysisLeft ? "analysis" : null;
   let n = 0; // step numbers shift on test days
   const extraLeft = reviewsLeft ? 0 : extraCandidates().length; // optional extra review after the regular one
@@ -131,14 +132,14 @@ function home() {
     ${REMOTE ? "" : `<p class="note">로컬 테스트 모드입니다. 기록은 이 기기에만 저장됩니다.</p>`}
     <ol class="steps">
       ${step(++n, "복습", s.review_ids.length ? `예전에 외운 단어 ${s.review_ids.length}개 확인` : "오늘은 복습할 단어가 없어요", !reviewsLeft, next === "review")}
-      ${testOn ? step(++n, "주간 테스트", sum.weekly?.done ? `${sum.weekly.results.filter((r) => r.ok).length} / ${sum.weekly.results.length} 정답 · <a href="#" id="testResult">결과 보기</a>` : `이번 주 단어 ${sum.weekly?.ids.length || weeklyPick().length}문제 · 객관식${sum.weekly?.results.length ? ` · ${sum.weekly.results.length}문제 풀었음` : ""}`, !testLeft, next === "test") : ""}
+      ${testOn ? step(++n, "주간 테스트", `이번 주 단어 ${T?.ids.length || weeklyPick().length}문제 · 객관식${T?.results.length ? ` · ${T.results.length}문제 풀었음` : ""} · ${testWeek() === DAY ? "내일(일요일)까지" : "오늘까지"}`, false, next === "test") : ""}
       ${step(++n, "단어 외우기", groupsLeft ? `${wordMix(s)} · 남은 단어 ${groupsLeft}개 · 마지막에 최종 점검` : !s.word_ids.length ? "오늘은 새 단어가 없어요 (지난 지문 복습일)" : sum.finalDone ? `${wordMix(s)} 완료` : "최종 점검만 남았어요", !wordsLeft, next === "vocab")}
       ${step(++n, "독해 + 어법", `${readingSummary(s)} · 남은 문제 ${readLeft}개`, !readLeft, next === "reading")}
       ${step(++n, "지문 분석", sum.analysis ? `제출 완료 · ${esc(S.passageById[sum.analysis.passage_id]?.source || "")}` : "오늘 지문 하나를 분석해서 PDF로 제출", !analysisLeft, next === "analysis")}
     </ol>
     ${
       next
-        ? `<button class="btn primary big" id="go">${sum.wordsDone.length || sum.reviewsDone.length || sum.vocabPos || sum.finalPos || sum.readingDone.length || sum.weekly?.results.length ? "이어서 하기" : "시작하기"}</button>
+        ? `<button class="btn primary big" id="go">${sum.wordsDone.length || sum.reviewsDone.length || sum.vocabPos || sum.finalPos || sum.readingDone.length || T?.results.length ? "이어서 하기" : "시작하기"}</button>
            ${resumeNote(sum)}`
         : `<div class="card center"><h2>오늘 학습 완료!</h2>${resultLine()}</div>`
     }
@@ -146,7 +147,6 @@ function home() {
        <p class="muted small center">원할 때만 하는 추가 복습이에요. 틀린 단어는 복습 날짜가 앞당겨져요.</p>` : ""}`);
   tap("#go", () => (next === "review" ? review() : next === "test" ? weeklyTest() : next === "vocab" ? vocab() : next === "reading" ? reading() : analysis()));
   tap("#extra", () => extraReview());
-  $app.querySelector("#testResult")?.addEventListener("click", (e) => { e.preventDefault(); testResults(); });
 }
 
 // ───────────── passage analysis (PDF, not graded) ─────────────
@@ -364,11 +364,33 @@ async function extraReview() {
 const TEST_MIN = 30, TEST_MAX = 60, TEST_STRONG_SHARE = 0.3;
 const TEST_KINDS = ["meaning", "word", "cloze", "synonym", "sense", "listen", "usage"];
 const TEST_KO = { meaning: "뜻 고르기", word: "단어 고르기", cloze: "빈칸", synonym: "유의어", sense: "여러 뜻", listen: "듣고 뜻", usage: "어색한 문장" };
-const isTestDay = () => new Date(DAY + "T00:00:00Z").getUTCDay() === 6; // Saturday
+// Open on Saturday, and on Sunday if it wasn't finished on Saturday. Gone once finished.
+/** The Saturday of this test weekend, or null on weekdays. */
+function testWeek() {
+  const dow = new Date(DAY + "T00:00:00Z").getUTCDay();
+  return dow === 6 ? DAY : dow === 0 ? addDays(DAY, -1) : null;
+}
+/** The daily set that holds this weekend's test (started Saturday → Saturday's set), or null. */
+function testHost() {
+  const sat = testWeek();
+  if (!sat) return null;
+  if (S.set.summary.weekly) return S.set;
+  if (DAY !== sat) return (S.allDaily || []).find((d) => d.day === sat && d.summary?.weekly) || null;
+  return null;
+}
+/** Is the weekly test still to do this weekend? */
+function testOpen() {
+  if (!testWeek()) return false;
+  const host = testHost();
+  return host ? !host.summary.weekly.done : weeklyPick().length > 0;
+}
+const saveHost = (host) =>
+  host === S.set ? saveSet() : (saving = saving.then(() => db.saveDaily(JSON.parse(JSON.stringify(host)))).catch((e) => console.error("save failed", e)));
 
-/** This week's test words (learned in the 7 days before today), weakest first. */
+/** This week's test words (learned in the 7 days before the test Saturday), weakest first. */
 function weeklyPick() {
-  const from = addDays(DAY, -7), to = addDays(DAY, -1);
+  const sat = testWeek() || DAY;
+  const from = addDays(sat, -7), to = addDays(sat, -1);
   const wrong = {};
   for (const e of S.events || [])
     if (e.day >= from && e.day <= to && e.word_id && (e.kind === "review" || (e.kind === "drill" && e.first_try)) && !e.correct)
@@ -405,13 +427,14 @@ function testKinds(ids) {
 }
 
 async function weeklyTest() {
-  const sum = S.set.summary;
-  if (!sum.weekly) {
+  let host = testHost();
+  if (!host) {
+    host = S.set;
     const ids = shuffle(weeklyPick());
-    sum.weekly = { ids, kinds: testKinds(ids), results: [], done: false };
-    await saveSet();
+    host.summary.weekly = { week: testWeek(), ids, kinds: testKinds(ids), results: [], done: false };
+    await saveHost(host);
   }
-  const T = sum.weekly;
+  const T = host.summary.weekly;
   if (!T.results.length)
     await intro("주간 테스트", `이번 주에 배운 단어 ${T.ids.length}문제예요. 모두 객관식이고,<br>정답과 해설은 다 푼 뒤에 한꺼번에 보여 줘요.`);
   const pool = T.ids.map((id) => S.wordById[id]);
@@ -433,19 +456,19 @@ async function weeklyTest() {
       }
       await db.logEvents([{ day: DAY, kind: "test", stage: kind, word_id: w.id, correct: ok, ms }]);
       T.results.push({ id: w.id, kind: kind === "listen" && !HAS_TTS ? "meaning" : kind, ok, picked: S.lastPick?.picked ?? null, right: S.lastPick?.right ?? null });
-      await saveSet();
+      await saveHost(host);
     }
   } finally {
     S.testMode = false;
   }
   T.done = true;
+  T.finished_on = DAY;
   T.score = T.results.filter((r) => r.ok).length;
-  await saveSet();
-  testResults();
+  await saveHost(host);
+  testResults(T);
 }
 
-function testResults() {
-  const T = S.set.summary.weekly;
+function testResults(T) {
   const total = T.results.length, right = T.results.filter((r) => r.ok).length;
   const byKind = {};
   for (const r of T.results) {
