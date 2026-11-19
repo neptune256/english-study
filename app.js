@@ -120,27 +120,33 @@ function home() {
       <div><div class="step-title">${title}</div><div class="muted small">${detail}</div></div>
     </li>`;
   const analysisLeft = s.passage_ids.some((id) => !isGrammar(id)) && !sum.analysis ? 1 : 0;
-  const next = reviewsLeft ? "review" : wordsLeft ? "vocab" : readLeft ? "reading" : analysisLeft ? "analysis" : null;
+  // Saturday: the weekly word test comes right after the review (if there are words to test).
+  const testOn = isTestDay() && (sum.weekly || weeklyPick().length);
+  const testLeft = testOn && !sum.weekly?.done ? 1 : 0;
+  const next = reviewsLeft ? "review" : testLeft ? "test" : wordsLeft ? "vocab" : readLeft ? "reading" : analysisLeft ? "analysis" : null;
+  let n = 0; // step numbers shift on test days
   const extraLeft = reviewsLeft ? 0 : extraCandidates().length; // optional extra review after the regular one
   screen(`
     <header class="top"><h1>오늘의 영어</h1><span class="muted">${DAY} · <a href="index.html${location.search}">과목 선택</a></span></header>
     ${REMOTE ? "" : `<p class="note">로컬 테스트 모드입니다. 기록은 이 기기에만 저장됩니다.</p>`}
     <ol class="steps">
-      ${step(1, "복습", s.review_ids.length ? `예전에 외운 단어 ${s.review_ids.length}개 확인` : "오늘은 복습할 단어가 없어요", !reviewsLeft, next === "review")}
-      ${step(2, "단어 외우기", groupsLeft ? `${wordMix(s)} · 남은 단어 ${groupsLeft}개 · 마지막에 최종 점검` : !s.word_ids.length ? "오늘은 새 단어가 없어요 (지난 지문 복습일)" : sum.finalDone ? `${wordMix(s)} 완료` : "최종 점검만 남았어요", !wordsLeft, next === "vocab")}
-      ${step(3, "독해 + 어법", `${readingSummary(s)} · 남은 문제 ${readLeft}개`, !readLeft, next === "reading")}
-      ${step(4, "지문 분석", sum.analysis ? `제출 완료 · ${esc(S.passageById[sum.analysis.passage_id]?.source || "")}` : "오늘 지문 하나를 분석해서 PDF로 제출", !analysisLeft, next === "analysis")}
+      ${step(++n, "복습", s.review_ids.length ? `예전에 외운 단어 ${s.review_ids.length}개 확인` : "오늘은 복습할 단어가 없어요", !reviewsLeft, next === "review")}
+      ${testOn ? step(++n, "주간 테스트", sum.weekly?.done ? `${sum.weekly.results.filter((r) => r.ok).length} / ${sum.weekly.results.length} 정답 · <a href="#" id="testResult">결과 보기</a>` : `이번 주 단어 ${sum.weekly?.ids.length || weeklyPick().length}문제 · 객관식${sum.weekly?.results.length ? ` · ${sum.weekly.results.length}문제 풀었음` : ""}`, !testLeft, next === "test") : ""}
+      ${step(++n, "단어 외우기", groupsLeft ? `${wordMix(s)} · 남은 단어 ${groupsLeft}개 · 마지막에 최종 점검` : !s.word_ids.length ? "오늘은 새 단어가 없어요 (지난 지문 복습일)" : sum.finalDone ? `${wordMix(s)} 완료` : "최종 점검만 남았어요", !wordsLeft, next === "vocab")}
+      ${step(++n, "독해 + 어법", `${readingSummary(s)} · 남은 문제 ${readLeft}개`, !readLeft, next === "reading")}
+      ${step(++n, "지문 분석", sum.analysis ? `제출 완료 · ${esc(S.passageById[sum.analysis.passage_id]?.source || "")}` : "오늘 지문 하나를 분석해서 PDF로 제출", !analysisLeft, next === "analysis")}
     </ol>
     ${
       next
-        ? `<button class="btn primary big" id="go">${sum.wordsDone.length || sum.reviewsDone.length || sum.vocabPos || sum.finalPos || sum.readingDone.length ? "이어서 하기" : "시작하기"}</button>
+        ? `<button class="btn primary big" id="go">${sum.wordsDone.length || sum.reviewsDone.length || sum.vocabPos || sum.finalPos || sum.readingDone.length || sum.weekly?.results.length ? "이어서 하기" : "시작하기"}</button>
            ${resumeNote(sum)}`
         : `<div class="card center"><h2>오늘 학습 완료!</h2>${resultLine()}</div>`
     }
     ${extraLeft ? `<button class="btn big" id="extra">더 복습하기 · 기억이 약한 단어 ${Math.min(EXTRA_BATCH, extraLeft)}개</button>
        <p class="muted small center">원할 때만 하는 추가 복습이에요. 틀린 단어는 복습 날짜가 앞당겨져요.</p>` : ""}`);
-  tap("#go", () => (next === "review" ? review() : next === "vocab" ? vocab() : next === "reading" ? reading() : analysis()));
+  tap("#go", () => (next === "review" ? review() : next === "test" ? weeklyTest() : next === "vocab" ? vocab() : next === "reading" ? reading() : analysis()));
   tap("#extra", () => extraReview());
+  $app.querySelector("#testResult")?.addEventListener("click", (e) => { e.preventDefault(); testResults(); });
 }
 
 // ───────────── passage analysis (PDF, not graded) ─────────────
@@ -350,6 +356,123 @@ async function extraReview() {
     await saveSet();
   }
   home();
+}
+
+// ───────────── weekly test (Saturdays) ─────────────
+// All choice questions, mixed types, no feedback until the end. Which words, and how many,
+// comes from this week's record: every word that showed weakness, plus a sample of the rest.
+const TEST_MIN = 30, TEST_MAX = 60, TEST_STRONG_SHARE = 0.3;
+const TEST_KINDS = ["meaning", "word", "cloze", "synonym", "sense", "listen", "usage"];
+const TEST_KO = { meaning: "뜻 고르기", word: "단어 고르기", cloze: "빈칸", synonym: "유의어", sense: "여러 뜻", listen: "듣고 뜻", usage: "어색한 문장" };
+const isTestDay = () => new Date(DAY + "T00:00:00Z").getUTCDay() === 6; // Saturday
+
+/** This week's test words (learned in the 7 days before today), weakest first. */
+function weeklyPick() {
+  const from = addDays(DAY, -7), to = addDays(DAY, -1);
+  const wrong = {};
+  for (const e of S.events || [])
+    if (e.day >= from && e.day <= to && e.word_id && (e.kind === "review" || (e.kind === "drill" && e.first_try)) && !e.correct)
+      wrong[e.word_id] = (wrong[e.word_id] || 0) + 1;
+  const rows = Object.values(S.progressById).filter((p) => p.learned_on >= from && p.learned_on <= to && S.wordById[p.word_id]);
+  const scored = rows.map((p) => {
+    const R = recall(p, DAY), q = p.drill_score ?? 0.7, lapses = p.lapses || 0, wr = wrong[p.word_id] || 0;
+    return {
+      id: p.word_id,
+      weak: R < 0.9 || lapses > 0 || q < 0.75 || wr >= 2,
+      score: (1 - R) * 3 + lapses * 0.8 + (1 - q) * 2 + Math.min(3, wr) * 0.5,
+    };
+  });
+  const weak = scored.filter((x) => x.weak).sort((a, b) => b.score - a.score);
+  const strong = shuffle(scored.filter((x) => !x.weak));
+  const n = Math.min(scored.length, TEST_MAX, Math.max(TEST_MIN, weak.length + Math.ceil(strong.length * TEST_STRONG_SHARE)));
+  return [...weak, ...strong].slice(0, n).map((x) => x.id);
+}
+
+/** Spread the question types evenly, skipping ones a word can't take. */
+function testKinds(ids) {
+  let k = 0;
+  return ids.map((id) => {
+    const w = S.wordById[id];
+    for (let tries = 0; tries < TEST_KINDS.length; tries++) {
+      const kind = TEST_KINDS[k++ % TEST_KINDS.length];
+      if (kind === "sense" && !hasSenses(w)) continue;
+      if (kind === "synonym" && !(w.synonyms || []).some((s) => !s.includes(" "))) continue;
+      if (kind === "listen" && !HAS_TTS) continue;
+      return kind;
+    }
+    return "meaning";
+  });
+}
+
+async function weeklyTest() {
+  const sum = S.set.summary;
+  if (!sum.weekly) {
+    const ids = shuffle(weeklyPick());
+    sum.weekly = { ids, kinds: testKinds(ids), results: [], done: false };
+    await saveSet();
+  }
+  const T = sum.weekly;
+  if (!T.results.length)
+    await intro("주간 테스트", `이번 주에 배운 단어 ${T.ids.length}문제예요. 모두 객관식이고,<br>정답과 해설은 다 푼 뒤에 한꺼번에 보여 줘요.`);
+  const pool = T.ids.map((id) => S.wordById[id]);
+  S.testMode = true;
+  try {
+    for (let i = T.results.length; i < T.ids.length; i++) {
+      const w = S.wordById[T.ids[i]];
+      const kind = T.kinds[i];
+      const t0 = Date.now();
+      S.lastPick = null;
+      const ok = await ask(kind, w, `주간 테스트 · ${i + 1} / ${T.ids.length}`, pool.length >= 4 ? pool : S.words);
+      const ms = S.lastMs ?? Date.now() - t0;
+      // A miss counts as a lapse (the word comes back sooner); a right answer leaves the schedule.
+      const row = S.progressById[w.id];
+      if (row) {
+        const next = afterExtraReview(row, ok, ms, kind, DAY);
+        S.progressById[w.id] = next;
+        await db.saveProgress([next]);
+      }
+      await db.logEvents([{ day: DAY, kind: "test", stage: kind, word_id: w.id, correct: ok, ms }]);
+      T.results.push({ id: w.id, kind: kind === "listen" && !HAS_TTS ? "meaning" : kind, ok, picked: S.lastPick?.picked ?? null, right: S.lastPick?.right ?? null });
+      await saveSet();
+    }
+  } finally {
+    S.testMode = false;
+  }
+  T.done = true;
+  T.score = T.results.filter((r) => r.ok).length;
+  await saveSet();
+  testResults();
+}
+
+function testResults() {
+  const T = S.set.summary.weekly;
+  const total = T.results.length, right = T.results.filter((r) => r.ok).length;
+  const byKind = {};
+  for (const r of T.results) {
+    const k = (byKind[r.kind] ||= { n: 0, ok: 0 });
+    k.n++;
+    if (r.ok) k.ok++;
+  }
+  const wrong = T.results.filter((r) => !r.ok);
+  screen(`
+    <div class="bar"><span>주간 테스트 결과</span></div>
+    <div class="card center">
+      <div class="q-word">${right} / ${total}</div>
+      <div class="muted">정답률 ${total ? Math.round((right / total) * 100) : 0}%</div>
+    </div>
+    <div class="card">
+      <div class="tag">유형별</div>
+      ${Object.entries(byKind).map(([k, v]) => `<div class="row-line">${TEST_KO[k] || k} <b>${v.ok}/${v.n}</b></div>`).join("")}
+    </div>
+    ${wrong.length ? `<div class="card explain">
+      <div class="ex-head">틀린 단어 ${wrong.length}개 · 다음 주 복습에 더 자주 나와요</div>
+      <ul class="why">${wrong.map((r) => {
+        const w = S.wordById[r.id];
+        return `<li class="x"><span class="mk">✗</span><span><b>${esc(w.word)}</b> ${esc(w.meaning)}
+          <br><span class="small">${TEST_KO[r.kind] || r.kind}${r.picked ? ` · 고른 답: ${esc(r.picked)}` : ""}${r.right ? ` · 정답: ${esc(r.right)}` : ""}</span></span></li>`;
+      }).join("")}</ul></div>` : `<div class="card center">모두 맞혔어요! 🎉</div>`}
+    <button class="btn primary big" id="home">홈으로</button>`);
+  tap("#home", () => home());
 }
 
 // ───────────── vocab (new words) ─────────────
@@ -703,8 +826,17 @@ function ask(kind, w, label, pool, senseIdx) {
         <div id="fb"></div>`);
       onShow?.();
       tap(".opt", async (el) => {
+        if (el.disabled) return;
         answered();
         const ok = el.dataset.v === answer;
+        if (S.testMode) {
+          // Test: no right/wrong shown now; the results screen explains at the end.
+          S.lastPick = { picked: options.find((o) => o.v === el.dataset.v)?.t, right: options.find((o) => o.v === answer)?.t };
+          $app.querySelectorAll(".opt").forEach((b) => (b.disabled = true));
+          el.classList.add("picked");
+          await wait(250);
+          return resolve(ok);
+        }
         $app.querySelectorAll(".opt").forEach((b) => {
           b.disabled = true;
           if (b.dataset.v === answer) b.classList.add("right");
@@ -790,6 +922,14 @@ function ask(kind, w, label, pool, senseIdx) {
         if (el.disabled) return;
         answered();
         const ok = el.dataset.v === "bad";
+        if (S.testMode) {
+          const plain = (s) => s.replace(/[[\]]/g, "");
+          S.lastPick = { picked: plain(opts.find((o) => o.v === el.dataset.v).en), right: plain(opts.find((o) => o.v === "bad").en) + " (어색한 문장)" };
+          $app.querySelectorAll(".opt.sent").forEach((b) => (b.disabled = true));
+          el.classList.add("picked");
+          await wait(250);
+          return resolve(ok);
+        }
         $app.querySelectorAll(".opt.sent").forEach((b) => {
           b.disabled = true;
           if (b.dataset.v === "bad") b.classList.add("right");
