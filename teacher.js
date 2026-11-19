@@ -78,6 +78,9 @@ function render() {
     ${dailyTable()}
     <div id="detail"></div>
 
+    <h2>주간 테스트 <span class="muted small">매주 토요일 · 지난 7일 동안 배운 단어 (약한 단어 전부 + 나머지 일부) · 객관식</span></h2>
+    ${weeklySection()}
+
     <h2>지문 분석 제출물 <span class="muted small">학생이 올린 PDF (채점 없음)</span></h2>
     ${submissionList()}
 
@@ -138,6 +141,13 @@ function dayWork(day) {
     parts.push({
       name: "독해 + 어법", done: read.length, total: d.passage_ids.length, ok: read.length >= d.passage_ids.length,
       note: read.length ? `${correct}/${read.length} 정답` : "",
+    });
+  }
+  if (s.weekly) {
+    const T = s.weekly, right = T.results.filter((r) => r.ok).length;
+    parts.push({
+      name: "주간 테스트", done: T.results.length, total: T.ids.length, ok: Boolean(T.done),
+      note: T.results.length ? `${right}/${T.results.length} 정답` : "",
     });
   }
   if (needsAnalysis) parts.push({ name: "지문 분석 PDF", done: s.analysis ? 1 : 0, total: 1, ok: Boolean(s.analysis), note: s.analysis ? "제출함" : "" });
@@ -222,6 +232,33 @@ function stockSection(unused, poolLeft, grammarLeft, daysLeft, runout) {
       <div class="types">${Object.entries(types).sort((a, b) => b[1] - a[1]).map(([t, n]) => `<span class="pill">${esc(t)} ${n}</span>`).join("") || "<span class='muted'>없음</span>"}</div>
     </div>
   </div>`;
+}
+
+const TEST_KO = { meaning: "뜻 고르기", word: "단어 고르기", cloze: "빈칸", synonym: "유의어", sense: "여러 뜻", listen: "듣고 뜻", usage: "어색한 문장" };
+
+function weeklySection() {
+  const tests = D.daily.filter((d) => d.summary?.weekly).map((d) => ({ day: d.day, T: d.summary.weekly }));
+  if (!tests.length) return `<div class="card muted">아직 본 주간 테스트가 없습니다. 첫 테스트는 다음 토요일에 열립니다.</div>`;
+  return tests.map(({ day, T }) => {
+    const total = T.results.length, right = T.results.filter((r) => r.ok).length;
+    const byKind = {};
+    for (const r of T.results) {
+      const k = (byKind[r.kind] ||= { n: 0, ok: 0 });
+      k.n++;
+      if (r.ok) k.ok++;
+    }
+    const wrong = T.results.filter((r) => !r.ok);
+    return `<details class="card p" ${tests[0].day === day ? "open" : ""}>
+      <summary>${md(day)} (${weekday(day)}) · <b>${right} / ${total}</b> (${pct(right, total)})${T.done ? "" : ` <span class="pill warn">진행 중 ${total}/${T.ids.length}</span>`}</summary>
+      <div class="types" style="margin:8px 0">${Object.entries(byKind).map(([k, v]) => `<span class="pill">${TEST_KO[k] || k} ${v.ok}/${v.n}</span>`).join("")}</div>
+      ${wrong.length ? `<div class="tbl-wrap"><table><tr><th>틀린 단어</th><th>뜻</th><th>유형</th><th>학생이 고른 답</th><th>정답</th></tr>
+        ${wrong.map((r) => {
+          const w = D.wordById[r.id];
+          return `<tr><td><b>${esc(w?.word || r.id)}</b></td><td class="small">${esc(w?.meaning)}</td><td class="small">${TEST_KO[r.kind] || r.kind}</td>
+            <td class="small x">${esc(r.picked || "")}</td><td class="small o">${esc(r.right || "")}</td></tr>`;
+        }).join("")}</table></div>` : `<p class="o">틀린 단어 없음</p>`}
+    </details>`;
+  }).join("");
 }
 
 function submissionList() {
