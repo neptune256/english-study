@@ -569,6 +569,31 @@ function printClass(day) {
   };
   const wordList = (list) => `<div class="pw-grid">${list.map((w) => `
       <div class="pw"><b>${esc(w.word)}</b> <span class="pw-pos">${esc(w.pos)}</span><div>${esc(w.meaning)}</div></div>`).join("")}</div>`;
+  // Grammar lesson for the day's 어법 question(s): concept, rules, examples, traps, practice.
+  const grammar = items.map((it, i) => ({ ...it, n: i + 1 })).filter(({ p }) => p.qtype === GRAMMAR && p.lesson);
+  // Example markup: [✗wrong|✓right] or [✓right]
+  const markEx = (s) => esc(s)
+    .replace(/\[✗([^|\]]+)\|✓([^\]]+)\]/g, '(<s class="gx">$1</s> / <b class="go">$2</b>)')
+    .replace(/\[✓([^\]]+)\]/g, '<b class="go">$1</b>');
+  const lessonHtml = ({ p, q, n }) => {
+    const L = p.lesson;
+    return `<section class="gl">
+      <h3 class="gl-title">${esc(L.title)} <span class="pg">(${n}번 어법 문제 · 포인트: ${esc(q.point || "")})</span></h3>
+      <div class="gl-key">${esc(L.key)}</div>
+      <div class="gl-h">규칙</div><ol class="gl-list">${L.rules.map((r) => `<li>${esc(r)}</li>`).join("")}</ol>
+      <div class="gl-h">예문 <span class="pg">(취소선 = 틀린 형태, 굵은 글씨 = 맞는 형태)</span></div>
+      <ul class="gl-ex">${L.examples.map((e) => `<li>${markEx(e.en)}<div class="pg">${esc(e.ko)} · ${esc(e.note)}</div></li>`).join("")}</ul>
+      <div class="gl-h">자주 하는 실수</div><ul class="gl-list">${L.traps.map((t) => `<li>${esc(t)}</li>`).join("")}</ul>
+      <div class="gl-h">푸는 순서</div><div class="gl-steps">${L.steps.map((s, i) => `<span>${i + 1}. ${esc(s)}</span>`).join(" → ")}</div>
+      <div class="gl-h">연습 문제 <span class="pg">괄호 안에서 알맞은 것을 고르세요</span></div>
+      <ol class="gl-practice">${L.practice.map((x) => `<li>${esc(x.q)}</li>`).join("")}</ol>
+    </section>`;
+  };
+  // The question's explanation, one line per choice (①..⑤), for the answer key.
+  const perChoice = (expl) => {
+    const parts = expl.split(/\s(?=[①②③④⑤]\s)/);
+    return `<div class="pc-expl">${esc(parts[0])}</div>${parts.length > 1 ? `<ul class="gl-list">${parts.slice(1).map((x) => `<li>${esc(x)}</li>`).join("")}</ul>` : ""}`;
+  };
 
   const sheet = document.createElement("div");
   sheet.className = "print-sheet class-sheet";
@@ -595,6 +620,8 @@ function printClass(day) {
         ${choicesHtml(q)}
       </section>`).join("")}
 
+    ${grammar.length ? `<div class="gl-page"><h2 class="pc-h">3. 오늘의 어법 수업</h2>${grammar.map(lessonHtml).join("")}</div>` : ""}
+
     <div class="pc-key">
       <h1 class="pc-title">답지 · ${md(day)}</h1>
       <table class="pc-sum"><tr><th>번호</th><th>유형</th><th>정답</th><th>학생 답</th></tr>
@@ -606,8 +633,13 @@ function printClass(day) {
           <div class="pc-qhead"><b>${i + 1}. 정답 ${CIRCLED[q.answer - 1]}</b> <span class="pg">${esc(p.source)} · ${esc(p.qtype)}${r ? ` · 학생 ${CIRCLED[r.pick - 1]} ${r.correct ? "(맞음)" : "(틀림)"}` : " · 학생 안 풂"}</span></div>
           ${q.choices.some((c, j) => c.trim() !== CIRCLED[j]) ? `<div class="pg">정답 선택지: ${esc(q.choices[q.answer - 1])}</div>` : ""}
           ${q.point ? `<div><b>어법 포인트</b> ${esc(q.point)}</div>` : ""}
-          <div class="pc-expl"><b>해설</b> ${esc(q.explanation)}</div>
+          ${p.qtype === GRAMMAR ? `<div><b>해설 (선택지별)</b></div>${perChoice(q.explanation)}` : `<div class="pc-expl"><b>해설</b> ${esc(q.explanation)}</div>`}
           ${p.answer_verified ? "" : `<div class="pg">※ 정답·해설은 Claude가 직접 풀어 만든 것으로, 아직 선생님 검증 전입니다.</div>`}
+        </section>`).join("")}
+      ${grammar.map(({ p }) => `
+        <section class="pc-a">
+          <div class="pc-qhead"><b>어법 수업 연습 문제 정답</b> <span class="pg">${esc(p.lesson.title)}</span></div>
+          <ol class="gl-list">${p.lesson.practice.map((x) => `<li><b>${esc(x.a)}</b> <span class="pg">· ${esc(x.why)}</span></li>`).join("")}</ol>
         </section>`).join("")}
     </div>`;
   document.body.appendChild(sheet);
