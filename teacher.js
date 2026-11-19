@@ -59,6 +59,8 @@ function render() {
     <header class="top"><h1>학습 대시보드</h1><span class="small"><a href="math-teacher.html${location.search}" class="muted">수학 대시보드 →</a> · <a href="index.html" class="muted">학생 화면 →</a></span></header>
     ${REMOTE ? "" : `<p class="note">로컬 테스트 모드: 이 브라우저에 저장된 기록만 보입니다.</p>`}
     ${homeworkSection()}
+    <h2>주간 테스트 <span class="muted small">토·일 · 지난주에 배운 단어 (약한 단어 전부 + 나머지 일부) · 객관식</span></h2>
+    <div id="weekly">${weeklySection()}</div>
     ${daysLeft <= 5 ? `<div class="alert">⚠ 새 지문이 <b>약 ${daysLeft}일분</b> 남았습니다 (예상 소진 ${runout.slice(5).replace("-", "/")}).
       컴퓨터를 켜고 Claude 앱을 열어 두면 저녁 8시 예약 작업이 자동으로 채웁니다.
       바닥나도 앱은 멈추지 않고 예전에 틀린 지문을 다시 냅니다.</div>` : ""}
@@ -77,9 +79,6 @@ function render() {
     <h2>날짜별 기록</h2>
     ${dailyTable()}
     <div id="detail"></div>
-
-    <h2>주간 테스트 <span class="muted small">매주 토요일 · 지난 7일 동안 배운 단어 (약한 단어 전부 + 나머지 일부) · 객관식</span></h2>
-    ${weeklySection()}
 
     <h2>지문 분석 제출물 <span class="muted small">학생이 올린 PDF (채점 없음)</span></h2>
     ${submissionList()}
@@ -110,6 +109,7 @@ function render() {
     })
   );
   bindMastery();
+  bindWeekly();
   $app.querySelectorAll(".open-pdf").forEach((b) => b.addEventListener("click", (e) => { e.stopPropagation(); openPdf(b); }));
   if (D.daily.length) showDay(D.daily[0].day);
 }
@@ -236,29 +236,127 @@ function stockSection(unused, poolLeft, grammarLeft, daysLeft, runout) {
 
 const TEST_KO = { meaning: "뜻 고르기", word: "단어 고르기", cloze: "빈칸", synonym: "유의어", sense: "여러 뜻", listen: "듣고 뜻", usage: "어색한 문장" };
 
+/** All weekly tests, newest first: {week (its Saturday), day (set that holds it), T}. */
+function weeklyTests() {
+  return D.daily
+    .filter((d) => d.summary?.weekly)
+    .map((d) => ({ week: d.summary.weekly.week || d.day, day: d.day, T: d.summary.weekly }))
+    .sort((a, b) => b.week.localeCompare(a.week));
+}
+const testScore = (T) => {
+  const total = T.results.length, right = T.results.filter((r) => r.ok).length;
+  return { total, right, p: total ? Math.round((100 * right) / total) : 0 };
+};
+
 function weeklySection() {
-  const tests = D.daily.filter((d) => d.summary?.weekly).map((d) => ({ day: d.day, T: d.summary.weekly }));
-  if (!tests.length) return `<div class="card muted">아직 본 주간 테스트가 없습니다. 첫 테스트는 다음 토요일에 열립니다.</div>`;
-  return tests.map(({ day, T }) => {
-    const total = T.results.length, right = T.results.filter((r) => r.ok).length;
-    const byKind = {};
-    for (const r of T.results) {
-      const k = (byKind[r.kind] ||= { n: 0, ok: 0 });
-      k.n++;
-      if (r.ok) k.ok++;
-    }
-    const wrong = T.results.filter((r) => !r.ok);
-    return `<details class="card p" ${tests[0].day === day ? "open" : ""}>
-      <summary>${md(day)} (${weekday(day)}) · <b>${right} / ${total}</b> (${pct(right, total)})${T.done ? "" : ` <span class="pill warn">진행 중 ${total}/${T.ids.length}</span>`}</summary>
-      <div class="types" style="margin:8px 0">${Object.entries(byKind).map(([k, v]) => `<span class="pill">${TEST_KO[k] || k} ${v.ok}/${v.n}</span>`).join("")}</div>
-      ${wrong.length ? `<div class="tbl-wrap"><table><tr><th>틀린 단어</th><th>뜻</th><th>유형</th><th>학생이 고른 답</th><th>정답</th></tr>
-        ${wrong.map((r) => {
+  const tests = weeklyTests();
+  // This weekend's test not taken yet?
+  const dow = new Date(DAY + "T00:00:00Z").getUTCDay();
+  const sat = dow === 6 ? DAY : dow === 0 ? addDays(DAY, -1) : null;
+  const pending = sat && !tests.some((t) => t.week === sat && t.T.done)
+    ? `<div class="alert" style="border-color:var(--accent)">이번 주 테스트(${md(sat)} 토)는 아직 ${tests.some((t) => t.week === sat) ? "푸는 중" : "안 봤어요"} · 일요일까지 열려 있어요.</div>` : "";
+  if (!tests.length) return pending + `<div class="card muted">아직 본 주간 테스트가 없습니다. 테스트는 매주 토요일에 열리고 일요일까지 볼 수 있습니다.</div>`;
+
+  // How often each word was missed across all tests (for "또 틀림").
+  const missCount = {};
+  for (const { T } of tests) for (const r of T.results) if (!r.ok) missCount[r.id] = (missCount[r.id] || 0) + 1;
+
+  const latest = tests[0], prev = tests[1];
+  const s = testScore(latest.T), ps = prev ? testScore(prev.T) : null;
+  const byKind = {};
+  for (const r of latest.T.results) {
+    const k = (byKind[r.kind] ||= { n: 0, ok: 0 });
+    k.n++;
+    if (r.ok) k.ok++;
+  }
+  const wrong = latest.T.results.filter((r) => !r.ok);
+  const diff = ps ? s.p - ps.p : null;
+
+  return pending + `
+    <div class="card wk-latest">
+      <div class="wk-head">
+        <div>
+          <div class="muted small">최근 테스트 · ${md(latest.week)} 주${latest.T.finished_on && latest.T.finished_on !== latest.week ? ` · ${md(latest.T.finished_on)}(${weekday(latest.T.finished_on)})에 봄` : ""}${latest.T.done ? "" : ` · <span class="x">진행 중 ${s.total}/${latest.T.ids.length}</span>`}</div>
+          <div class="wk-score">${s.right}<span class="muted"> / ${s.total}</span> <span class="wk-pct">${s.p}%</span>
+            ${diff !== null ? `<span class="small ${diff >= 0 ? "o" : "x"}">지난주 대비 ${diff >= 0 ? "▲" : "▼"} ${Math.abs(diff)}%p</span>` : ""}</div>
+        </div>
+        <div class="wk-actions">
+          <button class="btn" data-copy="${latest.day}">틀린 단어 복사</button>
+          <button class="btn primary" data-print="${latest.day}">복습 퀴즈지 인쇄</button>
+        </div>
+      </div>
+      <div class="wk-kinds">${Object.entries(byKind).sort((a, b) => a[1].ok / a[1].n - b[1].ok / b[1].n).map(([k, v]) => `
+        <div class="band"><span class="bn">${TEST_KO[k] || k}</span>
+          <div class="bar-bg"><div class="bar-fg ${v.ok / v.n < 0.6 ? "lv-fading" : ""}" style="width:${(100 * v.ok) / v.n}%"></div></div><b>${v.ok}/${v.n}</b></div>`).join("")}</div>
+      ${wrong.length ? `<div class="tbl-wrap"><table>
+        <tr><th>#</th><th>틀린 단어 (${wrong.length})</th><th>뜻</th><th>유형</th><th>학생이 고른 답</th><th>정답</th></tr>
+        ${wrong.map((r, i) => {
           const w = D.wordById[r.id];
-          return `<tr><td><b>${esc(w?.word || r.id)}</b></td><td class="small">${esc(w?.meaning)}</td><td class="small">${TEST_KO[r.kind] || r.kind}</td>
+          const again = missCount[r.id] > 1;
+          return `<tr><td class="muted">${i + 1}</td><td><b>${esc(w?.word || r.id)}</b>${again ? ` <span class="pill warn">${missCount[r.id]}번째 틀림</span>` : ""}</td>
+            <td class="small">${esc(w?.meaning)}</td><td class="small">${TEST_KO[r.kind] || r.kind}</td>
             <td class="small x">${esc(r.picked || "")}</td><td class="small o">${esc(r.right || "")}</td></tr>`;
-        }).join("")}</table></div>` : `<p class="o">틀린 단어 없음</p>`}
-    </details>`;
-  }).join("");
+        }).join("")}</table></div>` : `<p class="o">틀린 단어 없음 🎉</p>`}
+    </div>
+    ${tests.length > 1 ? `<div class="tbl-wrap"><table>
+      <tr><th>주</th><th>점수</th><th>정답률</th><th>틀린 단어</th><th></th></tr>
+      ${tests.map(({ week, day, T }) => {
+        const t = testScore(T);
+        const miss = T.results.filter((r) => !r.ok).map((r) => D.wordById[r.id]?.word || r.id);
+        return `<tr><td>${md(week)} 주</td><td><b>${t.right}/${t.total}</b>${T.done ? "" : ` <span class="pill warn">진행 중</span>`}</td>
+          <td><div class="bar-cell"><div class="bar-bg"><div class="bar-fg" style="width:${t.p}%"></div></div>${t.p}%</div></td>
+          <td class="small">${esc(miss.join(", ")) || "–"}</td>
+          <td style="white-space:nowrap"><button class="btn" data-copy="${day}">복사</button> <button class="btn" data-print="${day}">인쇄</button></td></tr>`;
+      }).join("")}</table></div>` : ""}`;
+}
+
+function testWrongWords(day) {
+  const T = D.daily.find((d) => d.day === day)?.summary.weekly;
+  return (T?.results || []).filter((r) => !r.ok).map((r) => D.wordById[r.id]).filter(Boolean);
+}
+
+function bindWeekly() {
+  $app.querySelectorAll("[data-copy]").forEach((b) =>
+    b.addEventListener("click", async () => {
+      const words = testWrongWords(b.dataset.copy);
+      const text = words.map((w, i) => `${i + 1}. ${w.word} - ${w.meaning}`).join("\n");
+      try {
+        await navigator.clipboard.writeText(text);
+        const t = b.textContent;
+        b.textContent = `복사됨 (${words.length}개)`;
+        setTimeout(() => (b.textContent = t), 1500);
+      } catch {
+        prompt("아래 내용을 복사하세요", text);
+      }
+    })
+  );
+  $app.querySelectorAll("[data-print]").forEach((b) => b.addEventListener("click", () => printQuiz(b.dataset.print)));
+}
+
+/** Review quiz sheet from a test's wrong words: questions (word → meaning, meaning → word), then the answer key. */
+function printQuiz(day) {
+  const T = D.daily.find((d) => d.day === day)?.summary.weekly;
+  const words = testWrongWords(day);
+  if (!words.length) return alert("틀린 단어가 없어요.");
+  // Half the items ask for the meaning, half for the word, in mixed order.
+  const items = words.map((w, i) => ({ w, toKo: i % 2 === 0 })).sort(() => Math.random() - 0.5);
+  const sheet = document.createElement("div");
+  sheet.className = "print-sheet";
+  sheet.innerHTML = `
+    <div class="print-bar no-print"><button class="btn primary" id="pq-print">인쇄</button><button class="btn" id="pq-close">닫기</button></div>
+    <h1>주간 테스트 복습 퀴즈 · ${md(T?.week || day)} 주 · ${words.length}문제</h1>
+    <p class="pg">이름: ____________ &nbsp; 날짜: ____________ &nbsp; 점수: ______ / ${words.length}</p>
+    <ol class="pq">${items.map(({ w, toKo }) => `<li>${toKo ? `<b>${esc(w.word)}</b> <span class="pg">(${esc(w.pos)})</span> → 뜻: ______________________` : `${esc(w.meaning)} → 영어: ______________________`}</li>`).join("")}</ol>
+    <div class="pq-key">
+      <h1>정답</h1>
+      <ol class="pq small">${items.map(({ w }) => `<li><b>${esc(w.word)}</b> = ${esc(w.meaning)}</li>`).join("")}</ol>
+    </div>`;
+  document.body.appendChild(sheet);
+  document.body.classList.add("printing");
+  const close = () => { sheet.remove(); document.body.classList.remove("printing"); };
+  sheet.querySelector("#pq-print").addEventListener("click", () => window.print());
+  sheet.querySelector("#pq-close").addEventListener("click", close);
+  window.scrollTo(0, 0);
 }
 
 function submissionList() {
@@ -434,11 +532,92 @@ function showDay(day) {
     }).join("");
   });
   $app.querySelector("#detail").innerHTML = `
-    <h2>${day} 상세</h2>
+    <div class="detail-head"><h2>${day} 상세</h2>
+      <button class="btn primary" id="class-pdf">수업용 PDF 만들기</button></div>
     <div class="two">
       <div><div class="tbl-wrap"><table><tr><th>단어</th><th>뜻</th><th>오답</th></tr>${wordRows.join("")}</table></div></div>
       <div class="card">${passages.join("")}</div>
     </div>`;
+  $app.querySelector("#class-pdf").addEventListener("click", () => printClass(day));
+}
+
+// ───────────── class handout: one day's words + reading questions, then an answer key ─────────────
+/** Passage text for print: underlines kept, blanks as lines, paragraphs kept. */
+function printBody(text) {
+  return esc(text)
+    .replace(/\{u\}/g, "<u>").replace(/\{\/u\}/g, "</u>")
+    .replace(/_{3,}/g, "<span class='pblank'></span>")
+    .split(/\n{2,}/).map((x) => `<p>${x.replace(/\n/g, "<br>")}</p>`).join("");
+}
+
+function printClass(day) {
+  const d = D.daily.find((x) => x.day === day);
+  if (!d) return;
+  const read = d.summary.readingDone || [];
+  const words = d.word_ids.map((id) => D.wordById[id]).filter(Boolean);
+  const reviews = (d.review_ids || []).map((id) => D.wordById[id]).filter(Boolean);
+  // One numbered item per question (a passage normally has one).
+  const items = d.passage_ids.flatMap((id) => {
+    const p = D.passageById[id];
+    return p ? p.questions.map((q) => ({ p, q, r: read.find((x) => x.id === id && x.qnum === q.qnum) })) : [];
+  });
+  const choicesHtml = (q) => {
+    const symbolsOnly = q.choices.every((c, i) => c.trim() === CIRCLED[i]); // 어법·무관: marks are in the text
+    return symbolsOnly
+      ? `<div class="pc-row">${q.choices.map((c) => `<span>${esc(c)}</span>`).join("")}</div>`
+      : `<ol class="pc-list">${q.choices.map((c, i) => `<li><span class="pc-n">${CIRCLED[i]}</span> ${esc(c)}</li>`).join("")}</ol>`;
+  };
+  const wordList = (list) => `<div class="pw-grid">${list.map((w) => `
+      <div class="pw"><b>${esc(w.word)}</b> <span class="pw-pos">${esc(w.pos)}</span><div>${esc(w.meaning)}</div></div>`).join("")}</div>`;
+
+  const sheet = document.createElement("div");
+  sheet.className = "print-sheet class-sheet";
+  sheet.innerHTML = `
+    <div class="print-bar no-print">
+      <button class="btn primary" id="pc-print">PDF로 저장 / 인쇄</button>
+      <button class="btn" id="pc-close">닫기</button>
+      <span class="muted small">인쇄 창에서 대상(프린터)을 "PDF로 저장"으로 고르면 파일로 받아집니다.</span>
+    </div>
+    <h1 class="pc-title">영어 수업 자료 · ${md(day)} (${weekday(day)})</h1>
+    <p class="pg">단어 ${words.length}개${reviews.length ? ` · 복습 단어 ${reviews.length}개` : ""} · 독해 ${items.length}문제</p>
+
+    <h2 class="pc-h">1. 이날 외운 단어</h2>
+    ${words.length ? wordList(words) : `<p class="pg">이날은 새 단어가 없었습니다.</p>`}
+    ${reviews.length ? `<h3 class="pc-h3">복습한 단어</h3>${wordList(reviews)}` : ""}
+
+    <h2 class="pc-h">2. 독해 문제</h2>
+    ${items.map(({ p, q }, i) => `
+      <section class="pc-q">
+        <div class="pc-qhead"><b>${i + 1}.</b> ${esc(p.instruction)} <span class="pg">(${esc(p.source)} · ${esc(p.qtype)})</span></div>
+        ${p.box ? `<div class="given">${esc(p.box).replace(/\n/g, "<br>")}</div>` : ""}
+        <div class="pbody">${printBody(p.body)}</div>
+        ${p.glossary?.length ? `<div class="pg">${p.glossary.map((g) => "* " + esc(g)).join("&nbsp;&nbsp;")}</div>` : ""}
+        ${choicesHtml(q)}
+      </section>`).join("")}
+
+    <div class="pc-key">
+      <h1 class="pc-title">답지 · ${md(day)}</h1>
+      <table class="pc-sum"><tr><th>번호</th><th>유형</th><th>정답</th><th>학생 답</th></tr>
+        ${items.map(({ p, q, r }, i) => `<tr><td>${i + 1}</td><td>${esc(p.qtype)}</td><td><b>${CIRCLED[q.answer - 1]}</b></td>
+          <td>${r ? `${CIRCLED[r.pick - 1]} ${r.correct ? "○" : "✕"}` : "안 풂"}</td></tr>`).join("")}
+      </table>
+      ${items.map(({ p, q, r }, i) => `
+        <section class="pc-a">
+          <div class="pc-qhead"><b>${i + 1}. 정답 ${CIRCLED[q.answer - 1]}</b> <span class="pg">${esc(p.source)} · ${esc(p.qtype)}${r ? ` · 학생 ${CIRCLED[r.pick - 1]} ${r.correct ? "(맞음)" : "(틀림)"}` : " · 학생 안 풂"}</span></div>
+          ${q.choices.some((c, j) => c.trim() !== CIRCLED[j]) ? `<div class="pg">정답 선택지: ${esc(q.choices[q.answer - 1])}</div>` : ""}
+          ${q.point ? `<div><b>어법 포인트</b> ${esc(q.point)}</div>` : ""}
+          <div class="pc-expl"><b>해설</b> ${esc(q.explanation)}</div>
+          ${p.answer_verified ? "" : `<div class="pg">※ 정답·해설은 Claude가 직접 풀어 만든 것으로, 아직 선생님 검증 전입니다.</div>`}
+        </section>`).join("")}
+    </div>`;
+  document.body.appendChild(sheet);
+  document.body.classList.add("printing");
+  const title = document.title;
+  document.title = `영어수업자료_${day}`; // default PDF file name
+  const close = () => { sheet.remove(); document.body.classList.remove("printing"); document.title = title; };
+  sheet.querySelector("#pc-print").addEventListener("click", () => window.print());
+  sheet.querySelector("#pc-close").addEventListener("click", close);
+  window.scrollTo(0, 0);
 }
 
 function passageView(p, q) {
