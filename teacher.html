@@ -80,6 +80,37 @@
     .fc-bar div { width: 100%; background: var(--accent); }
     .fc-n { font-weight: 700; min-height: 1.2em; }
     .fc-d { color: var(--muted); }
+    /* weekly test */
+    .wk-head { display: flex; justify-content: space-between; align-items: flex-start; gap: 12px; flex-wrap: wrap; margin-bottom: 10px; }
+    .wk-score { font-size: 34px; font-weight: 700; line-height: 1.2; }
+    .wk-score .muted { font-size: 22px; }
+    .wk-pct { font-size: 22px; color: var(--accent); margin: 0 6px; }
+    .wk-actions { display: flex; gap: 8px; flex-wrap: wrap; }
+    .wk-kinds { margin-bottom: 12px; max-width: 520px; }
+    .print-sheet ol.pq { font-size: 16px; line-height: 2.4; padding-left: 28px; }
+    .print-sheet .pq-key { page-break-before: always; margin-top: 30px; }
+    .print-sheet .pq-key ol.pq { line-height: 1.8; }
+    /* class handout (수업용 PDF) */
+    .detail-head { display: flex; justify-content: space-between; align-items: center; gap: 10px; flex-wrap: wrap; margin: 26px 0 10px; }
+    .detail-head h2 { margin: 0; }
+    .class-sheet .print-bar { align-items: center; flex-wrap: wrap; }
+    .class-sheet .pc-title { font-size: 20px; margin: 14px 0 4px; }
+    .class-sheet .pc-h { font-size: 17px; margin: 22px 0 8px; border-bottom: 2px solid #000; padding-bottom: 4px; }
+    .class-sheet .pc-h3 { font-size: 15px; margin: 14px 0 6px; }
+    .class-sheet .pw-grid { display: grid; grid-template-columns: repeat(3, 1fr); gap: 6px 14px; font-size: 14px; line-height: 1.4; }
+    .class-sheet .pw { border-bottom: 1px solid #ddd; padding: 4px 0; break-inside: avoid; }
+    .class-sheet .pw-pos { color: #666; font-size: 12px; }
+    .class-sheet .pc-q { margin: 18px 0 26px; break-inside: avoid; page-break-inside: avoid; }
+    .class-sheet .pc-qhead { margin-bottom: 8px; font-size: 15px; line-height: 1.5; }
+    .class-sheet .pc-list { list-style: none; padding: 0; margin: 8px 0 0; font-size: 15px; line-height: 1.7; }
+    .class-sheet .pc-n { display: inline-block; width: 1.4em; }
+    .class-sheet .pc-row { display: flex; gap: 28px; font-size: 16px; margin-top: 8px; }
+    .class-sheet .pc-key { page-break-before: always; break-before: page; margin-top: 30px; }
+    .class-sheet .pc-sum { border-collapse: collapse; margin: 8px 0 18px; font-size: 14px; }
+    .class-sheet .pc-sum th, .class-sheet .pc-sum td { border: 1px solid #999; padding: 4px 12px; text-align: center; color: #000; }
+    .class-sheet .pc-a { margin: 0 0 16px; padding-bottom: 12px; border-bottom: 1px solid #ccc; font-size: 14px; line-height: 1.7; break-inside: avoid; }
+    .class-sheet .pc-expl { margin-top: 4px; }
+    @media print { .class-sheet .pw-grid { grid-template-columns: repeat(3, 1fr); } }
     /* homework check */
     :root { --hw-part: #d4891c; --hw-part-soft: #fbf0dc; }
     @media (prefers-color-scheme: dark) { :root:not([data-theme="light"]) { --hw-part: #f0b25a; --hw-part-soft: #3a2e17; } }
