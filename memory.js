@@ -105,6 +105,16 @@ export function afterReview(row, correct, ms, stage, day) {
   };
 }
 
+/**
+ * Progress row after an optional extra review (a word that is not due yet).
+ * Right: the schedule stays as it is (an early right answer says little about the memory, and
+ * moving the next check further out would skip the useful one). Wrong: a lapse, as in afterReview.
+ */
+export function afterExtraReview(row, correct, ms, stage, day) {
+  if (!correct) return afterReview(row, false, ms, stage, day);
+  return { ...row, correct: (row.correct || 0) + 1 };
+}
+
 /** Which question to use for a review: recognition for young memories, production for older ones. */
 export function reviewStage(row) {
   const S = row.stability ?? 1;
