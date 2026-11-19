@@ -149,6 +149,8 @@ body.printing #app { display: none; }
 .why li.o .mk { color: var(--good); }
 .why li.x { background: var(--bad-soft); }
 .why li.x .mk { color: var(--bad); }
+.row-line { display: flex; justify-content: space-between; padding: 4px 0; border-bottom: 1px solid var(--line); }
+.row-line:last-child { border-bottom: none; }
 .syns { margin: 4px 0; }
 .syns .tag { margin-right: 4px; }
 /* multi-meaning words & sentence choice */
