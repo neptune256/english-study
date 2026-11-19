@@ -1,6 +1,6 @@
 import { db, today, addDays, REMOTE } from "./db.js";
 import { planDay, nextLevels, GRAMMAR } from "./planner.js";
-import { afterLearning, afterReview, reviewStage } from "./memory.js";
+import { afterLearning, afterReview, afterExtraReview, reviewStage, recall, MASTERED_DAYS } from "./memory.js";
 
 const $app = document.getElementById("app");
 const DAY = new URLSearchParams(location.search).get("day") || today(); // ?day= for testing
@@ -121,6 +121,7 @@ function home() {
     </li>`;
   const analysisLeft = s.passage_ids.some((id) => !isGrammar(id)) && !sum.analysis ? 1 : 0;
   const next = reviewsLeft ? "review" : wordsLeft ? "vocab" : readLeft ? "reading" : analysisLeft ? "analysis" : null;
+  const extraLeft = reviewsLeft ? 0 : extraCandidates().length; // optional extra review after the regular one
   screen(`
     <header class="top"><h1>오늘의 영어</h1><span class="muted">${DAY} · <a href="index.html${location.search}">과목 선택</a></span></header>
     ${REMOTE ? "" : `<p class="note">로컬 테스트 모드입니다. 기록은 이 기기에만 저장됩니다.</p>`}
@@ -135,8 +136,11 @@ function home() {
         ? `<button class="btn primary big" id="go">${sum.wordsDone.length || sum.reviewsDone.length || sum.vocabPos || sum.finalPos || sum.readingDone.length ? "이어서 하기" : "시작하기"}</button>
            ${resumeNote(sum)}`
         : `<div class="card center"><h2>오늘 학습 완료!</h2>${resultLine()}</div>`
-    }`);
+    }
+    ${extraLeft ? `<button class="btn big" id="extra">더 복습하기 · 기억이 약한 단어 ${Math.min(EXTRA_BATCH, extraLeft)}개</button>
+       <p class="muted small center">원할 때만 하는 추가 복습이에요. 틀린 단어는 복습 날짜가 앞당겨져요.</p>` : ""}`);
   tap("#go", () => (next === "review" ? review() : next === "vocab" ? vocab() : next === "reading" ? reading() : analysis()));
+  tap("#extra", () => extraReview());
 }
 
 // ───────────── passage analysis (PDF, not graded) ─────────────
@@ -310,6 +314,39 @@ async function review() {
     await db.logEvents([{ day: DAY, kind: "review", stage: kind, word_id: w.id, correct: ok, ms }]);
     if (!ok) await card(w, "다시 익히기", true);
     sum.reviewsDone.push(w.id);
+    await saveSet();
+  }
+  home();
+}
+
+// ───────────── extra review (optional, not-yet-due words) ─────────────
+const EXTRA_BATCH = 10;
+
+/** Learned words not due today and not checked today, weakest memory first. */
+function extraCandidates() {
+  const sum = S.set.summary;
+  const skip = new Set([...S.set.review_ids, ...S.set.word_ids, ...(sum.extraDone || [])]);
+  return Object.values(S.progressById)
+    .filter((p) => p.learned_on && p.learned_on < DAY && !skip.has(p.word_id) && S.wordById[p.word_id] && (p.stability ?? 0) < MASTERED_DAYS)
+    .sort((a, b) => recall(a, DAY) - recall(b, DAY));
+}
+
+async function extraReview() {
+  const sum = S.set.summary;
+  const queue = extraCandidates().slice(0, EXTRA_BATCH).map((p) => p.word_id);
+  for (let i = 0; i < queue.length; i++) {
+    const w = S.wordById[queue[i]];
+    const row = S.progressById[w.id];
+    const kind = reviewStage(row);
+    const t0 = Date.now();
+    const ok = await ask(kind, w, `더 복습하기 ${i + 1} / ${queue.length}`, S.words);
+    const ms = S.lastMs ?? Date.now() - t0;
+    const next = afterExtraReview(row, ok, ms, kind, DAY);
+    S.progressById[w.id] = next;
+    await db.saveProgress([next]);
+    await db.logEvents([{ day: DAY, kind: "review", stage: kind, word_id: w.id, correct: ok, ms }]);
+    if (!ok) await card(w, "다시 익히기", true);
+    (sum.extraDone ||= []).push(w.id);
     await saveSet();
   }
   home();
