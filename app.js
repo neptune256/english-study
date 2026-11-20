@@ -565,7 +565,12 @@ async function vocab() {
         queue.shift();
         tried.add(item);
         if (ok) done++;
-        else queue.push(item);
+        else {
+          // Missed: back into the line at a random later spot (at least 2 questions away when
+          // possible), so the retry order isn't the same as the first pass.
+          const lo = Math.min(2, queue.length);
+          queue.splice(lo + Math.floor(Math.random() * (queue.length - lo + 1)), 0, item);
+        }
         save(queue, tried, done);
       }
     }
