@@ -559,7 +559,7 @@ function wordbook() {
     let head = "";
     if (WB.tab === "learned" && p.learned_on !== lastDay) {
       lastDay = p.learned_on;
-      head = `<div class="wb-day">${mdShort(p.learned_on)}에 배운 단어</div>`;
+      head = `<div class="wb-day"><span>${mdShort(p.learned_on)}에 배운 단어</span><button class="wb-day-go" data-day="${p.learned_on}">이날 단어 외우기</button></div>`;
     }
     const lv = p?.learned_on ? masteryLabel(p, DAY) : null;
     return `${head}<button class="wb-row" data-i="${i}">
@@ -575,10 +575,14 @@ function wordbook() {
       <button class="wb-tab ${WB.tab === "new" ? "on" : ""}" data-tab="new">아직 안 배운 단어 ${S.words.length - learnedN}</button>
     </div>
     <input class="wb-search" id="wb-q" type="search" placeholder="단어나 뜻으로 찾기" value="${esc(WB.q)}" autocomplete="off" autocapitalize="off" spellcheck="false" />
+    ${list.length ? `<button class="btn primary big" id="wb-study">떠올리기로 외우기 · ${WB.q ? "찾은 단어" : WB.tab === "learned" ? "공부한 단어" : "안 배운 단어"} ${list.length}개 <span class="small">(${Math.min(WB_ROUND, list.length)}개씩)</span></button>` : ""}
     <div class="wb-list">${rows.join("") || `<p class="muted center">${WB.q ? "찾는 단어가 없어요." : WB.tab === "learned" ? "아직 공부한 단어가 없어요." : "모든 단어를 공부했어요!"}</p>`}</div>`;
   tap("#wb-home", () => home());
   tap(".wb-tab", (el) => { WB.tab = el.dataset.tab; wordbook(); window.scrollTo(0, 0); });
   tap(".wb-row", (el) => wordbookCard(list, Number(el.dataset.i)));
+  tap("#wb-study", () => wordbookStudy(list.map((w) => w.id)));
+  tap(".wb-day-go", (el) =>
+    wordbookStudy(list.filter((w) => S.progressById[w.id]?.learned_on === el.dataset.day).map((w) => w.id)));
   const input = $app.querySelector("#wb-q");
   let timer;
   input.addEventListener("input", () => {
@@ -620,6 +624,50 @@ function wordbookCard(list, i) {
   });
   tap("#wb-prev", () => i > 0 && wordbookCard(list, i - 1));
   tap("#wb-next", () => i < list.length - 1 && wordbookCard(list, i + 1));
+}
+
+// Word book study: the same "떠올리기" as the daily lesson (see the word, say the meaning,
+// check, then 떠올렸어요 / 몰랐어요), in rounds of 20. Practice only: no records change.
+const WB_ROUND = 20;
+
+/** ids: the words to go through (in list order); start: where this round begins. */
+async function wordbookStudy(ids, start = 0) {
+  const round = ids.slice(start, start + WB_ROUND);
+  if (!round.length) return wordbook();
+  const queue = shuffle(round);
+  const missed = new Set();
+  let known = 0;
+  while (queue.length) {
+    const id = queue.shift();
+    const w = S.wordById[id];
+    const ok = await ask("recall", w, `단어장 외우기 · 남은 ${queue.length + 1}개`, S.words);
+    if (ok) {
+      if (!missed.has(id)) known++;
+    } else {
+      missed.add(id);
+      // Back into the line at a random later spot, so the order changes (as in the lesson).
+      const lo = Math.min(2, queue.length);
+      queue.splice(lo + Math.floor(Math.random() * (queue.length - lo + 1)), 0, id);
+    }
+  }
+  const next = start + WB_ROUND < ids.length;
+  const missedWords = round.filter((id) => missed.has(id)).map((id) => S.wordById[id]);
+  screen(`
+    <div class="bar"><span>단어장 외우기 결과</span></div>
+    <div class="card center">
+      <div class="q-word">${known} / ${round.length}</div>
+      <div class="muted">처음 볼 때 떠올린 단어</div>
+    </div>
+    ${missedWords.length ? `<div class="card">
+      <div class="tag">몰랐던 단어 ${missedWords.length}개</div>
+      ${missedWords.map((w) => `<div class="row-line"><b>${esc(w.word)}</b> <span>${esc(w.meaning)}</span></div>`).join("")}
+    </div>` : `<div class="card center">모두 떠올렸어요! 🎉</div>`}
+    ${missedWords.length ? `<button class="btn primary big" id="wb-again">몰랐던 단어만 다시 (${missedWords.length}개)</button>` : ""}
+    ${next ? `<button class="btn big ${missedWords.length ? "" : "primary"}" id="wb-more">다음 ${Math.min(WB_ROUND, ids.length - start - WB_ROUND)}개 외우기 <span class="small muted">(${start + WB_ROUND} / ${ids.length} 지남)</span></button>` : ""}
+    <button class="btn big" id="wb-list">단어장으로</button>`);
+  tap("#wb-again", () => wordbookStudy(missedWords.map((w) => w.id)));
+  tap("#wb-more", () => wordbookStudy(ids, start + WB_ROUND));
+  tap("#wb-list", () => wordbook());
 }
 
 // ───────────── weekly test (Saturdays) ─────────────
