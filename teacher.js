@@ -561,6 +561,11 @@ function printClass(day) {
     const p = D.passageById[id];
     return p ? p.questions.map((q) => ({ p, q, r: read.find((x) => x.id === id && x.qnum === q.qnum) })) : [];
   });
+  // The student's own analysis PDF (if submitted) goes in as page images after the reading section.
+  const analysis = d.summary.analysis;
+  const anPassage = analysis ? D.passageById[analysis.passage_id] : null;
+  const anNo = analysis ? items.findIndex(({ p }) => p.id === analysis.passage_id) + 1 : 0;
+  const grammarNo = analysis ? 4 : 3;
   const choicesHtml = (q) => {
     const symbolsOnly = q.choices.every((c, i) => c.trim() === CIRCLED[i]); // 어법·무관: marks are in the text
     return symbolsOnly
@@ -620,7 +625,12 @@ function printClass(day) {
         ${choicesHtml(q)}
       </section>`).join("")}
 
-    ${grammar.length ? `<div class="gl-page"><h2 class="pc-h">3. 오늘의 어법 수업</h2>${grammar.map(lessonHtml).join("")}</div>` : ""}
+    ${analysis ? `<div class="an-page">
+      <h2 class="pc-h">3. 학생이 분석한 지문 <span class="pg">${anNo ? `${anNo}번 · ` : ""}${esc(anPassage?.source || analysis.passage_id)}</span></h2>
+      <div id="an-pages"><p class="pg" id="an-status">학생이 제출한 분석 PDF를 불러오는 중…</p></div>
+    </div>` : ""}
+
+    ${grammar.length ? `<div class="gl-page"><h2 class="pc-h">${grammarNo}. 오늘의 어법 수업</h2>${grammar.map(lessonHtml).join("")}</div>` : ""}
 
     <div class="pc-key">
       <h1 class="pc-title">답지 · ${md(day)}</h1>
@@ -647,9 +657,66 @@ function printClass(day) {
   const title = document.title;
   document.title = `영어수업자료_${day}`; // default PDF file name
   const close = () => { sheet.remove(); document.body.classList.remove("printing"); document.title = title; };
-  sheet.querySelector("#pc-print").addEventListener("click", () => window.print());
+  const printBtn = sheet.querySelector("#pc-print");
+  printBtn.addEventListener("click", () => window.print());
   sheet.querySelector("#pc-close").addEventListener("click", close);
   window.scrollTo(0, 0);
+  if (analysis) {
+    // Hold printing until the student's pages are in, so the PDF isn't saved without them.
+    const label = printBtn.textContent;
+    printBtn.disabled = true;
+    printBtn.textContent = "학생 분석 PDF 불러오는 중…";
+    renderAnalysisPages(analysis.path, sheet.querySelector("#an-pages")).finally(() => {
+      printBtn.disabled = false;
+      printBtn.textContent = label;
+    });
+  }
+}
+
+// pdf.js (cdnjs) turns each page of the student's PDF into an image the print sheet can hold.
+const PDFJS = "https://cdnjs.cloudflare.com/ajax/libs/pdf.js/3.11.174/";
+let pdfjsReady = null;
+function loadPdfJs() {
+  pdfjsReady ||= new Promise((resolve, reject) => {
+    const s = document.createElement("script");
+    s.src = PDFJS + "pdf.min.js";
+    s.onload = () => {
+      window.pdfjsLib.GlobalWorkerOptions.workerSrc = PDFJS + "pdf.worker.min.js";
+      resolve(window.pdfjsLib);
+    };
+    s.onerror = () => { pdfjsReady = null; reject(new Error("pdf.js를 불러오지 못했어요")); };
+    document.head.appendChild(s);
+  });
+  return pdfjsReady;
+}
+
+async function renderAnalysisPages(path, box) {
+  const status = (msg) => (box.innerHTML = `<p class="pg">${esc(msg)}</p>`);
+  try {
+    const blob = await db.analysisFile(path);
+    if (!blob) return status("로컬 테스트 모드에서는 제출 파일이 없어요.");
+    const [pdfjs, data] = await Promise.all([loadPdfJs(), blob.arrayBuffer()]);
+    // Korean text in the PDF needs pdf.js's character maps (cMaps) to show up.
+    const pdf = await pdfjs.getDocument({ data, cMapUrl: PDFJS + "cmaps/", cMapPacked: true, standardFontDataUrl: PDFJS + "standard_fonts/" }).promise;
+    const imgs = [];
+    for (let i = 1; i <= pdf.numPages; i++) {
+      const page = await pdf.getPage(i);
+      const base = page.getViewport({ scale: 1 });
+      const viewport = page.getViewport({ scale: Math.min(3, 1600 / base.width) }); // sharp enough to print
+      const canvas = document.createElement("canvas");
+      canvas.width = viewport.width;
+      canvas.height = viewport.height;
+      const ctx = canvas.getContext("2d");
+      ctx.fillStyle = "#fff";
+      ctx.fillRect(0, 0, canvas.width, canvas.height);
+      await page.render({ canvasContext: ctx, viewport }).promise;
+      imgs.push(`<img class="an-img" alt="학생 분석 ${i}쪽" src="${canvas.toDataURL("image/jpeg", 0.88)}">`);
+    }
+    box.innerHTML = `<p class="pg">학생 제출본 · ${pdf.numPages}쪽</p>${imgs.join("")}`;
+  } catch (e) {
+    console.error(e);
+    status(`학생 분석 PDF를 넣지 못했어요 (${e.message}). 대시보드의 "PDF 열기"로 따로 볼 수 있어요.`);
+  }
 }
 
 function passageView(p, q) {
