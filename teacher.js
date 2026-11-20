@@ -533,12 +533,62 @@ function showDay(day) {
   });
   $app.querySelector("#detail").innerHTML = `
     <div class="detail-head"><h2>${day} 상세</h2>
-      <button class="btn primary" id="class-pdf">수업용 PDF 만들기</button></div>
+      <span class="detail-btns"><button class="btn primary" id="class-pdf">수업용 PDF 만들기</button>
+      <button class="btn" id="tr-pdf">해석 PDF 만들기</button></span></div>
     <div class="two">
       <div><div class="tbl-wrap"><table><tr><th>단어</th><th>뜻</th><th>오답</th></tr>${wordRows.join("")}</table></div></div>
       <div class="card">${passages.join("")}</div>
     </div>`;
   $app.querySelector("#class-pdf").addEventListener("click", () => printClass(day));
+  $app.querySelector("#tr-pdf").addEventListener("click", () => printTranslation(day));
+}
+
+// ───────────── translation handout: each passage in English, then its Korean translation ─────────────
+function printTranslation(day) {
+  const d = D.daily.find((x) => x.day === day);
+  if (!d) return;
+  const ps = d.passage_ids.map((id) => D.passageById[id]).filter(Boolean);
+  const plain = (t) => esc((t || "").replace(/\{\/?u\}/g, "")).replace(/_{3,}/g, "_____");
+  const paras = (t) => t.split(/\n{2,}/).map((x) => `<p>${x.replace(/\n/g, "<br>")}</p>`).join("");
+  const missing = ps.filter((p) => !p.translation?.text).length;
+  const sheet = document.createElement("div");
+  sheet.className = "print-sheet tr-sheet";
+  sheet.innerHTML = `
+    <div class="print-bar no-print">
+      <button class="btn primary" id="tr-print">PDF로 저장 / 인쇄</button>
+      <button class="btn" id="tr-close">닫기</button>
+      <span class="muted small">인쇄 창에서 대상(프린터)을 "PDF로 저장"으로 고르면 파일로 받아집니다.</span>
+    </div>
+    <h1 class="pc-title">독해 지문 해석 · ${md(day)} (${weekday(day)})</h1>
+    <p class="pg">지문 ${ps.length}개${missing ? ` · 해석 준비 중 ${missing}개` : ""} · 어법 지문은 바르게 고친 문장으로 해석했습니다.</p>
+    ${ps.map((p, i) => {
+      const q = p.questions[0];
+      const tr = p.translation || {};
+      const engChoices = q.choices.some((c) => /[A-Za-z]{3}/.test(c));
+      return `<section class="tr-p">
+        <div class="pc-qhead"><b>${i + 1}. ${esc(p.qtype)}</b> <span class="pg">${esc(p.source)} · 정답 ${CIRCLED[q.answer - 1]}</span></div>
+        <div class="tr-en">
+          ${p.box ? `<div class="given">${plain(p.box).replace(/\n/g, "<br>")}</div>` : ""}
+          ${paras(plain(p.body))}
+        </div>
+        <div class="tr-ko">
+          <div class="tr-tag">해석</div>
+          ${tr.text
+            ? `${tr.box ? `<div class="given">${esc(tr.box).replace(/\n/g, "<br>")}</div>` : ""}${paras(esc(tr.text))}`
+            : `<p class="pg">이 지문의 해석은 아직 준비되지 않았어요.</p>`}
+        </div>
+        ${engChoices && tr.choices?.length ? `<table class="tr-ch">${q.choices.map((c, j) => `
+          <tr class="${j + 1 === q.answer ? "ans" : ""}"><td>${CIRCLED[j]}</td><td>${esc(c)}</td><td>${esc(tr.choices[j] || "")}</td></tr>`).join("")}</table>` : ""}
+      </section>`;
+    }).join("")}`;
+  document.body.appendChild(sheet);
+  document.body.classList.add("printing");
+  const title = document.title;
+  document.title = `영어지문해석_${day}`; // default PDF file name
+  const close = () => { sheet.remove(); document.body.classList.remove("printing"); document.title = title; };
+  sheet.querySelector("#tr-print").addEventListener("click", () => window.print());
+  sheet.querySelector("#tr-close").addEventListener("click", close);
+  window.scrollTo(0, 0);
 }
 
 // ───────────── class handout: one day's words + reading questions, then an answer key ─────────────
