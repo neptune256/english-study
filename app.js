@@ -83,12 +83,104 @@ async function load() {
 
   let set = allDaily.find((d) => d.day === DAY);
   if (!set) {
+    if (CATCHUP) {
+      // A past day without a plan (the app wasn't opened that day): nothing to catch up on.
+      screen(`<div class="card center"><h2>${md(DAY)}에는 학습 기록이 없어요</h2>
+        <p class="muted">그날은 앱을 열지 않아서 과제가 만들어지지 않았어요.</p>
+        <a class="btn primary big" href="${dayLink(TODAY)}">오늘 학습으로</a></div>`);
+      return;
+    }
     const used = new Set(allDaily.flatMap((d) => d.passage_ids));
     set = planDay({ day: DAY, state, passages, words, progress, events, usedPassageIds: used });
     await db.saveDaily(set);
   }
   S.set = set;
+  if (dropLearnedElsewhere(set)) await saveSet();
   home();
+}
+
+// ───────────── catching up on past days ─────────────
+const TODAY = today();
+// A past date (?day=) is a catch-up session: only that day's words, reading and analysis.
+// Reviews and the weekly test always happen on today's screen.
+const CATCHUP = DAY < TODAY;
+const md = (d) => `${Number(d.slice(5, 7))}/${Number(d.slice(8))}`;
+const weekdayKo = (d) => "일월화수목금토"[new Date(d + "T00:00:00Z").getUTCDay()];
+/** Link to the app on another day (keeps ?local=1 and other test params). */
+function dayLink(d) {
+  const p = new URLSearchParams(location.search);
+  if (d === TODAY) p.delete("day");
+  else p.set("day", d);
+  const q = p.toString();
+  return "english.html" + (q ? "?" + q : "");
+}
+/** Words of a day's set that the student has since learned on another day (not relearn words). */
+function learnedElsewhere(d) {
+  const done = new Set(d.summary.wordsDone || []), re = new Set(d.summary.relearnIds || []);
+  return d.word_ids.filter((id) => {
+    const p = S.progressById[id];
+    return !done.has(id) && !re.has(id) && p?.learned_on && p.learned_on !== d.day;
+  });
+}
+/**
+ * Take words learned on another day out of this day's list (kept in summary.movedIds), so they
+ * are not drilled twice and their memory record isn't overwritten. Returns true if it changed.
+ */
+function dropLearnedElsewhere(d) {
+  const moved = learnedElsewhere(d);
+  if (!moved.length) return false;
+  const m = new Set(moved);
+  const sum = d.summary;
+  d.word_ids = d.word_ids.filter((id) => !m.has(id));
+  sum.movedIds = [...new Set([...(sum.movedIds || []), ...moved])];
+  const p = sum.vocabPos;
+  if (p) {
+    p.groupIds = p.groupIds.filter((id) => !m.has(id));
+    if (Array.isArray(p.queue)) p.queue = p.queue.filter((it) => typeof it === "string" && !m.has(it.split("#")[0]));
+    p.done = Math.min(p.done || 0, Math.max(0, p.groupIds.length - (p.queue?.length || 0)));
+    if (!p.groupIds.length) sum.vocabPos = null;
+  }
+  if (sum.finalPos) sum.finalPos.queue = sum.finalPos.queue.filter((q) => !m.has(q.id));
+  return true;
+}
+/** What is still left of a past day's work (reviews and tests aren't caught up on). */
+function leftover(d) {
+  const sum = d.summary;
+  const moved = new Set([...(sum.movedIds || []), ...learnedElsewhere(d)]);
+  const ids = d.word_ids.filter((id) => !moved.has(id));
+  const words = ids.filter((id) => !(sum.wordsDone || []).includes(id)).length;
+  const final = ids.length > 0 && !sum.finalDone;
+  const reading = d.passage_ids.filter((id) => !(sum.readingDone || []).find((r) => r.id === id)).length;
+  const analysis = d.passage_ids.some((id) => S.passageById[id] && !isGrammar(id)) && !sum.analysis;
+  return { words, final, reading, analysis, any: words > 0 || final || reading > 0 || analysis };
+}
+/** Panel: past days with unfinished work, newest first. */
+function catchupPanel() {
+  const days = (S.allDaily || [])
+    .filter((d) => d.day < TODAY)
+    .map((d) => ({ d, l: leftover(d) }))
+    .filter((x) => x.l.any)
+    .sort((a, b) => (a.d.day < b.d.day ? 1 : -1));
+  const items = days.map(({ d, l }) => {
+    const parts = [
+      l.words ? `단어 ${l.words}개` : l.final ? "단어 최종 점검" : "",
+      l.reading ? `독해 ${l.reading}문제` : "",
+      l.analysis ? "지문 분석" : "",
+    ].filter(Boolean);
+    const here = d.day === DAY;
+    return `<a class="cu-item ${here ? "here" : ""}" href="${dayLink(d.day)}">
+      <div class="cu-date">${md(d.day)} <span class="muted">(${weekdayKo(d.day)})</span>${here ? ` <span class="cu-now">지금 하는 중</span>` : ""}</div>
+      <div class="cu-left">${parts.map((p) => `<span>${p}</span>`).join("")}</div>
+      ${here ? "" : `<div class="cu-go">이어서 하기 →</div>`}
+    </a>`;
+  });
+  return `<aside class="catchup">
+    <h2 class="cu-title">밀린 학습</h2>
+    ${items.length
+      ? `<p class="muted small">끝내지 못한 날이 ${items.length}일 있어요. 누르면 그날 남은 공부를 이어서 해요.</p>${items.join("")}`
+      : `<p class="muted small">밀린 학습이 없어요. 👍</p>`}
+    ${CATCHUP ? `<a class="btn cu-back" href="${dayLink(TODAY)}">← 오늘 학습으로</a>` : ""}
+  </aside>`;
 }
 
 // Saves run one after another (never out of order) and don't hold up the next question.
@@ -110,7 +202,8 @@ window.saveAndExit = async () => {
 function home() {
   const s = S.set;
   const sum = s.summary;
-  const reviewsLeft = s.review_ids.filter((id) => !sum.reviewsDone.includes(id)).length;
+  // On a catch-up day, reviews belong to today's screen.
+  const reviewsLeft = CATCHUP ? 0 : s.review_ids.filter((id) => !sum.reviewsDone.includes(id)).length;
   const groupsLeft = s.word_ids.filter((id) => !sum.wordsDone.includes(id)).length;
   const wordsLeft = groupsLeft || (s.word_ids.length && !sum.finalDone ? 1 : 0); // final check still to do
   const readLeft = s.passage_ids.filter((id) => !sum.readingDone.find((r) => r.id === id)).length;
@@ -121,31 +214,37 @@ function home() {
     </li>`;
   const analysisLeft = s.passage_ids.some((id) => !isGrammar(id)) && !sum.analysis ? 1 : 0;
   // Weekend: the weekly word test comes right after the review, until it is finished.
-  const testOn = testOpen();
+  const testOn = !CATCHUP && testOpen();
   const T = testOn ? testHost()?.summary.weekly : null; // started, not finished
   const testLeft = testOn ? 1 : 0;
   const next = reviewsLeft ? "review" : testLeft ? "test" : wordsLeft ? "vocab" : readLeft ? "reading" : analysisLeft ? "analysis" : null;
   let n = 0; // step numbers shift on test days
-  const extraLeft = reviewsLeft ? 0 : extraCandidates().length; // optional extra review after the regular one
-  screen(`
-    <header class="top"><h1>오늘의 영어</h1><span class="muted">${DAY} · <a href="index.html${location.search}">과목 선택</a></span></header>
+  const extraLeft = reviewsLeft || CATCHUP ? 0 : extraCandidates().length; // optional extra review after the regular one
+  screen(`<div class="home-grid"><div class="home-main">
+    ${CATCHUP
+      ? `<header class="top"><h1>밀린 학습</h1><span class="muted">${md(DAY)} (${weekdayKo(DAY)}) · <a href="${dayLink(TODAY)}">오늘로</a></span></header>
+         <p class="note">${md(DAY)}에 끝내지 못한 공부를 이어서 해요. 이날 기록으로 저장돼요. 복습은 오늘 화면에서 해요.</p>`
+      : `<header class="top"><h1>오늘의 영어</h1><span class="muted">${DAY} · <a href="index.html${location.search}">과목 선택</a></span></header>`}
     ${REMOTE ? "" : `<p class="note">로컬 테스트 모드입니다. 기록은 이 기기에만 저장됩니다.</p>`}
     <ol class="steps">
-      ${step(++n, "복습", s.review_ids.length ? `예전에 외운 단어 ${s.review_ids.length}개 확인` : "오늘은 복습할 단어가 없어요", !reviewsLeft, next === "review")}
+      ${CATCHUP ? "" : step(++n, "복습", s.review_ids.length ? `예전에 외운 단어 ${s.review_ids.length}개 확인` : "오늘은 복습할 단어가 없어요", !reviewsLeft, next === "review")}
       ${testOn ? step(++n, "주간 테스트", `이번 주 단어 ${T?.ids.length || weeklyPick().length}문제 · 객관식${T?.results.length ? ` · ${T.results.length}문제 풀었음` : ""} · ${testWeek() === DAY ? "내일(일요일)까지" : "오늘까지"}`, false, next === "test") : ""}
       ${step(++n, "단어 외우기", groupsLeft ? `${wordMix(s)} · 남은 단어 ${groupsLeft}개 · 마지막에 최종 점검` : !s.word_ids.length ? "오늘은 새 단어가 없어요 (지난 지문 복습일)" : sum.finalDone ? `${wordMix(s)} 완료` : "최종 점검만 남았어요", !wordsLeft, next === "vocab")}
       ${step(++n, "독해 + 어법", `${readingSummary(s)} · 남은 문제 ${readLeft}개`, !readLeft, next === "reading")}
-      ${step(++n, "지문 분석", sum.analysis ? `제출 완료 · ${esc(S.passageById[sum.analysis.passage_id]?.source || "")}` : "오늘 지문 하나를 분석해서 PDF로 제출", !analysisLeft, next === "analysis")}
+      ${step(++n, "지문 분석", sum.analysis ? `제출 완료 · ${esc(S.passageById[sum.analysis.passage_id]?.source || "")}` : `${CATCHUP ? "이날" : "오늘"} 지문 하나를 분석해서 PDF로 제출`, !analysisLeft, next === "analysis")}
     </ol>
     ${
       next
         ? `<button class="btn primary big" id="go">${sum.wordsDone.length || sum.reviewsDone.length || sum.vocabPos || sum.finalPos || sum.readingDone.length || T?.results.length ? "이어서 하기" : "시작하기"}</button>
            ${resumeNote(sum)}`
-        : `<div class="card center"><h2>오늘 학습 완료!</h2>${resultLine()}</div>`
+        : CATCHUP
+          ? `<div class="card center"><h2>${md(DAY)} 학습 완료!</h2>${resultLine()}<a class="btn primary big" href="${dayLink(TODAY)}">오늘 학습으로</a></div>`
+          : `<div class="card center"><h2>오늘 학습 완료!</h2>${resultLine()}</div>`
     }
     ${extraLeft ? `<button class="btn big" id="extra">더 복습하기 · 기억이 약한 단어 ${Math.min(EXTRA_BATCH, extraLeft)}개</button>
        <p class="muted small center">원할 때만 하는 추가 복습이에요. 틀린 단어는 복습 날짜가 앞당겨져요.</p>` : ""}
-    <button class="btn big wb-open" id="wordbook">📖 단어장 <span class="muted small">공부한 단어 ${Object.values(S.progressById).filter((p) => p.learned_on && S.wordById[p.word_id]).length}개 · 전체 ${S.words.length}개</span></button>`);
+    <button class="btn big wb-open" id="wordbook">📖 단어장 <span class="muted small">공부한 단어 ${Object.values(S.progressById).filter((p) => p.learned_on && S.wordById[p.word_id]).length}개 · 전체 ${S.words.length}개</span></button>
+    </div>${catchupPanel()}</div>`);
   tap("#wordbook", () => wordbook());
   tap("#go", () => (next === "review" ? review() : next === "test" ? weeklyTest() : next === "vocab" ? vocab() : next === "reading" ? reading() : analysis()));
   tap("#extra", () => extraReview());
@@ -709,7 +808,7 @@ async function finalCheck(todays) {
     tried = new Set(pos.tried);
     done = pos.done;
   } else {
-    await intro("최종 점검", `오늘 외운 ${todays.length}단어를 섞어서 한 번 더 확인해요.<br>틀린 단어는 마지막에 한 번 더 나와요.`);
+    await intro("최종 점검", `${CATCHUP ? "이날" : "오늘"} 외운 ${todays.length}단어를 섞어서 한 번 더 확인해요.<br>틀린 단어는 마지막에 한 번 더 나와요.`);
     queue = shuffle(todays).map((w, i) => ({ w, kind: FINAL_KINDS[i % FINAL_KINDS.length] }));
     tried = new Set();
     done = 0;
