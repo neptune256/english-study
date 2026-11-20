@@ -75,6 +75,14 @@ h1 { font-size: 28px; }
 .btn.big { width: 100%; padding: 16px; font-size: 19px; margin-top: 6px; }
 .btn.good { background: var(--good-soft); border-color: var(--good); color: var(--good); font-weight: 700; flex: 1; }
 .btn.bad { background: var(--bad-soft); border-color: var(--bad); color: var(--bad); font-weight: 700; flex: 1; }
+/* recall self-check: 확실히 알아요 / 헷갈려요 / 몰라요 */
+:root { --mid: #b7791f; --mid-soft: #fbf0dc; }
+@media (prefers-color-scheme: dark) { :root:not([data-theme="light"]) { --mid: #f0b25a; --mid-soft: #3a2e17; } }
+:root[data-theme="dark"] { --mid: #f0b25a; --mid-soft: #3a2e17; }
+.btn.mid { background: var(--mid-soft); border-color: var(--mid); color: var(--mid); font-weight: 700; flex: 1; }
+.judge3 { margin-top: 6px; }
+.judge3 .btn { display: flex; flex-direction: column; align-items: center; gap: 2px; padding: 12px 8px; }
+.judge3 .btn span { font-size: 12px; font-weight: 400; opacity: 0.85; }
 .row { display: flex; gap: 10px; margin-top: 6px; }
 .icon { font-size: 24px; background: none; border: none; cursor: pointer; padding: 6px; }
 
