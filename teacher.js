@@ -565,11 +565,29 @@ function printTranslation(day) {
       const q = p.questions[0];
       const tr = p.translation || {};
       const engChoices = q.choices.some((c) => /[A-Za-z]{3}/.test(c));
+      // Key words of this passage (most important first), shown bold in the English text.
+      const kw = (p.words || [])
+        .map((pw) => ({ pw, w: D.wordById[pw.id] }))
+        .filter((x) => x.w)
+        .sort((a, b) => (b.pw.importance || 0) - (a.pw.importance || 0));
+      const forms = [...new Set(kw.map((x) => x.pw.surface).filter(Boolean))].sort((a, b) => b.length - a.length);
+      const bold = (html) => forms.length
+        ? html.replace(new RegExp(`(?<![A-Za-z-])(${forms.map((f) => f.replace(/[.*+?^${}()|[\]\\]/g, "\\$&")).join("|")})(?![A-Za-z])`, "gi"), "<b class=\"kw\">$1</b>")
+        : html;
+      const wordBox = kw.length || p.glossary?.length
+        ? `<div class="tr-words"><div class="tr-tag">단어</div>
+            <div class="tr-wgrid">${kw.map(({ pw, w }) => {
+              const shown = pw.surface && pw.surface.toLowerCase() !== w.word.toLowerCase() ? `${esc(pw.surface)} <span class="pg">← ${esc(w.word)}</span>` : esc(w.word);
+              return `<div class="tr-w"><b>${shown}</b> <span class="pg">${esc(w.pos)}</span><div>${esc(w.meaning)}</div></div>`;
+            }).join("")}</div>
+            ${p.glossary?.length ? `<div class="pg tr-gl">${p.glossary.map((g) => "* " + esc(g)).join("&nbsp;&nbsp;")}</div>` : ""}
+          </div>`
+        : "";
       return `<section class="tr-p">
         <div class="pc-qhead"><b>${i + 1}. ${esc(p.qtype)}</b> <span class="pg">${esc(p.source)} · 정답 ${CIRCLED[q.answer - 1]}</span></div>
         <div class="tr-en">
-          ${p.box ? `<div class="given">${plain(p.box).replace(/\n/g, "<br>")}</div>` : ""}
-          ${paras(plain(p.body))}
+          ${p.box ? `<div class="given">${bold(plain(p.box)).replace(/\n/g, "<br>")}</div>` : ""}
+          ${paras(bold(plain(p.body)))}
         </div>
         <div class="tr-ko">
           <div class="tr-tag">해석</div>
@@ -579,6 +597,7 @@ function printTranslation(day) {
         </div>
         ${engChoices && tr.choices?.length ? `<table class="tr-ch">${q.choices.map((c, j) => `
           <tr class="${j + 1 === q.answer ? "ans" : ""}"><td>${CIRCLED[j]}</td><td>${esc(c)}</td><td>${esc(tr.choices[j] || "")}</td></tr>`).join("")}</table>` : ""}
+        ${wordBox}
       </section>`;
     }).join("")}`;
   document.body.appendChild(sheet);
