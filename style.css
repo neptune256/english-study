@@ -150,6 +150,26 @@ body.printing #app { display: none; }
 .why li.x { background: var(--bad-soft); }
 .why li.x .mk { color: var(--bad); }
 /* word book */
+/* 밀린 학습: past days with unfinished work. Below the steps on narrow screens,
+   in the left margin (as a second column) on wide ones. */
+.home-grid { display: grid; grid-template-columns: minmax(0, 1fr); gap: 18px; }
+.catchup { background: var(--card); border: 1px solid var(--line); border-radius: var(--radius); padding: 16px; align-self: start; }
+.cu-title { font-size: 19px; margin-bottom: 4px; }
+.catchup > p { margin: 0 0 10px; }
+.cu-item { display: block; text-decoration: none; color: var(--text); border: 1.5px solid var(--line); border-radius: 12px; padding: 10px 12px; margin-bottom: 8px; }
+.cu-item:hover { border-color: var(--accent); }
+.cu-item.here { border-color: var(--accent); background: var(--accent-soft); }
+.cu-date { font-weight: 700; }
+.cu-now { font-size: 12px; font-weight: 700; color: var(--accent); margin-left: 4px; }
+.cu-left { display: flex; flex-wrap: wrap; gap: 4px; margin: 4px 0; }
+.cu-left span { font-size: 13px; padding: 1px 8px; border-radius: 99px; background: var(--bad-soft); color: var(--bad); }
+.cu-go { font-size: 14px; color: var(--accent); font-weight: 700; }
+.cu-back { display: block; text-align: center; margin-top: 6px; text-decoration: none; }
+@media (min-width: 1100px) {
+  #app:has(.home-grid) { max-width: 1120px; }
+  .home-grid { grid-template-columns: 290px minmax(0, 760px); justify-content: center; gap: 28px; }
+  .catchup { order: -1; position: sticky; top: 20px; max-height: calc(100vh - 40px); overflow-y: auto; }
+}
 .wb-open { margin-top: 18px; display: flex; justify-content: center; align-items: baseline; gap: 8px; flex-wrap: wrap; }
 .wb-tabs { display: grid; grid-template-columns: 1fr 1fr; gap: 8px; margin-bottom: 10px; }
 .wb-tab { font: inherit; font-size: 16px; padding: 10px; border-radius: 12px; border: 1.5px solid var(--line); background: var(--card); color: var(--text); cursor: pointer; }
