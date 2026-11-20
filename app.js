@@ -1,6 +1,6 @@
 import { db, today, addDays, REMOTE } from "./db.js";
 import { planDay, nextLevels, GRAMMAR } from "./planner.js";
-import { afterLearning, afterReview, afterExtraReview, reviewStage, recall, MASTERED_DAYS } from "./memory.js";
+import { afterLearning, afterReview, afterExtraReview, reviewStage, recall, masteryLabel, MASTERED_DAYS } from "./memory.js";
 
 const $app = document.getElementById("app");
 const DAY = new URLSearchParams(location.search).get("day") || today(); // ?day= for testing
@@ -144,7 +144,9 @@ function home() {
         : `<div class="card center"><h2>오늘 학습 완료!</h2>${resultLine()}</div>`
     }
     ${extraLeft ? `<button class="btn big" id="extra">더 복습하기 · 기억이 약한 단어 ${Math.min(EXTRA_BATCH, extraLeft)}개</button>
-       <p class="muted small center">원할 때만 하는 추가 복습이에요. 틀린 단어는 복습 날짜가 앞당겨져요.</p>` : ""}`);
+       <p class="muted small center">원할 때만 하는 추가 복습이에요. 틀린 단어는 복습 날짜가 앞당겨져요.</p>` : ""}
+    <button class="btn big wb-open" id="wordbook">📖 단어장 <span class="muted small">공부한 단어 ${Object.values(S.progressById).filter((p) => p.learned_on && S.wordById[p.word_id]).length}개 · 전체 ${S.words.length}개</span></button>`);
+  tap("#wordbook", () => wordbook());
   tap("#go", () => (next === "review" ? review() : next === "test" ? weeklyTest() : next === "vocab" ? vocab() : next === "reading" ? reading() : analysis()));
   tap("#extra", () => extraReview());
 }
@@ -356,6 +358,109 @@ async function extraReview() {
     await saveSet();
   }
   home();
+}
+
+// ───────────── word book (look up any word; no quiz) ─────────────
+const WB = { tab: "learned", q: "" }; // remembered while the page is open
+const mdShort = (day) => `${Number(day.slice(5, 7))}/${Number(day.slice(8))}`;
+
+/** A passage line holding the word: today's passages first, else any passage it came from. */
+function contextAny(w) {
+  const today = contextRaw(w);
+  if (today) return { ctx: showEx(today), tag: "오늘 지문" };
+  for (const p of S.passages) {
+    const pw = p.words?.find((x) => x.id === w.id);
+    if (pw?.context) return { ctx: showEx(pw.context), tag: "지문 속 문장" };
+  }
+  return { ctx: "", tag: "" };
+}
+
+/** Words for the current tab and search: learned (newest first) or not yet learned (A–Z). */
+function wordbookList() {
+  const q = WB.q.trim().toLowerCase();
+  const hit = (w) => !q || w.word.toLowerCase().includes(q) || (w.meaning || "").includes(q);
+  if (WB.tab === "learned") {
+    return Object.values(S.progressById)
+      .filter((p) => p.learned_on && S.wordById[p.word_id] && hit(S.wordById[p.word_id]))
+      .sort((a, b) => b.learned_on.localeCompare(a.learned_on) || a.word_id.localeCompare(b.word_id))
+      .map((p) => S.wordById[p.word_id]);
+  }
+  return S.words
+    .filter((w) => !S.progressById[w.id]?.learned_on && hit(w))
+    .sort((a, b) => a.word.localeCompare(b.word));
+}
+
+function wordbook() {
+  const learnedN = Object.values(S.progressById).filter((p) => p.learned_on && S.wordById[p.word_id]).length;
+  const list = wordbookList();
+  const todaySet = new Set(S.set.word_ids);
+  let lastDay = null;
+  const rows = list.map((w, i) => {
+    const p = S.progressById[w.id];
+    let head = "";
+    if (WB.tab === "learned" && p.learned_on !== lastDay) {
+      lastDay = p.learned_on;
+      head = `<div class="wb-day">${mdShort(p.learned_on)}에 배운 단어</div>`;
+    }
+    const lv = p?.learned_on ? masteryLabel(p, DAY) : null;
+    return `${head}<button class="wb-row" data-i="${i}">
+        <span class="wb-w">${esc(w.word)}</span>
+        <span class="wb-m">${esc(w.meaning)}</span>
+        ${lv ? `<span class="wb-lv lv-${lv.key}">${lv.text}</span>` : todaySet.has(w.id) ? `<span class="wb-lv">오늘 배울 단어</span>` : ""}
+      </button>`;
+  });
+  $app.innerHTML = `
+    <div class="bar wb-bar"><button class="exit" id="wb-home">← 홈</button><span>단어장</span></div>
+    <div class="wb-tabs">
+      <button class="wb-tab ${WB.tab === "learned" ? "on" : ""}" data-tab="learned">공부한 단어 ${learnedN}</button>
+      <button class="wb-tab ${WB.tab === "new" ? "on" : ""}" data-tab="new">아직 안 배운 단어 ${S.words.length - learnedN}</button>
+    </div>
+    <input class="wb-search" id="wb-q" type="search" placeholder="단어나 뜻으로 찾기" value="${esc(WB.q)}" autocomplete="off" autocapitalize="off" spellcheck="false" />
+    <div class="wb-list">${rows.join("") || `<p class="muted center">${WB.q ? "찾는 단어가 없어요." : WB.tab === "learned" ? "아직 공부한 단어가 없어요." : "모든 단어를 공부했어요!"}</p>`}</div>`;
+  tap("#wb-home", () => home());
+  tap(".wb-tab", (el) => { WB.tab = el.dataset.tab; wordbook(); window.scrollTo(0, 0); });
+  tap(".wb-row", (el) => wordbookCard(list, Number(el.dataset.i)));
+  const input = $app.querySelector("#wb-q");
+  let timer;
+  input.addEventListener("input", () => {
+    clearTimeout(timer);
+    timer = setTimeout(() => {
+      WB.q = input.value;
+      const pos = input.selectionStart;
+      wordbook();
+      const again = $app.querySelector("#wb-q");
+      again.focus();
+      again.setSelectionRange(pos, pos);
+    }, 250);
+  });
+}
+
+/** One word, shown like the first study card, with previous / next. */
+function wordbookCard(list, i) {
+  const w = list[i];
+  const p = S.progressById[w.id];
+  const { ctx, tag } = contextAny(w);
+  const lv = p?.learned_on ? masteryLabel(p, DAY) : null;
+  const status = p?.learned_on
+    ? `<p class="muted small center">${mdShort(p.learned_on)}에 배움 · ${lv.text}${p.next_review ? ` · 다음 복습 ${mdShort(p.next_review)}` : ""}</p>`
+    : `<p class="muted small center">아직 배우지 않은 단어예요${S.set.word_ids.includes(w.id) ? " · 오늘 배울 단어" : ""}</p>`;
+  $app.innerHTML = `
+    <div class="bar wb-bar"><button class="exit" id="wb-back">← 단어장</button><span>${i + 1} / ${list.length}</span></div>
+    ${wordCardHtml(w, { ctx, ctxTag: tag })}
+    ${status}
+    <div class="row">
+      <button class="btn" id="wb-prev" ${i === 0 ? "disabled" : ""}>← 이전</button>
+      <button class="btn" id="wb-next" ${i === list.length - 1 ? "disabled" : ""} style="margin-left:auto">다음 →</button>
+    </div>`;
+  window.scrollTo(0, 0);
+  speak(w.word);
+  tap("#say", () => speak(w.word));
+  tap("#wb-back", () => {
+    wordbook();
+    $app.querySelector(`.wb-row[data-i="${i}"]`)?.scrollIntoView({ block: "center" });
+  });
+  tap("#wb-prev", () => i > 0 && wordbookCard(list, i - 1));
+  tap("#wb-next", () => i < list.length - 1 && wordbookCard(list, i + 1));
 }
 
 // ───────────── weekly test (Saturdays) ─────────────
@@ -699,27 +804,31 @@ function match(group, label) {
 }
 
 /** Study card. Resolves when the student taps "외웠어요". */
-function card(w, label, isReview = false) {
-  return new Promise((resolve) => {
-    const ctx = contextOf(w);
-    screen(`
-      <div class="bar"><span>${label}</span></div>
-      <div class="card word-card">
+/** The word card body (same in the study stage and the word book). */
+function wordCardHtml(w, { badge = "", ctx = "", ctxTag = "오늘 지문" } = {}) {
+  return `<div class="card word-card">
         <div class="word-head">
           <h2 class="word">${esc(w.word)}</h2>
           <button class="icon" id="say" aria-label="발음 듣기">🔊</button>
         </div>
-        <div class="pos">${esc(w.pos)}${!isReview && isRelearn(w.id) ? ` <span class="badge">다시 배우기 · 예전에 외운 단어</span>` : ""}</div>
+        <div class="pos">${esc(w.pos)}${badge}</div>
         <div class="meaning">${esc(w.meaning)}</div>
         ${w.root ? `<div class="root"><span class="tag">어원·연상</span> ${esc(w.root)}</div>` : ""}
         ${w.extra ? `<div class="muted small">${esc(w.extra)}</div>` : ""}
         ${w.synonyms?.length ? `<div class="syns small"><span class="tag">비슷한 말</span> ${w.synonyms.map((s) => synLabel(w, s)).join(" · ")}</div>` : ""}
-        ${ctx ? `<div class="ex ctx"><div class="tag">오늘 지문</div>${ctx}</div>` : ""}
+        ${ctx ? `<div class="ex ctx"><div class="tag">${ctxTag}</div>${ctx}</div>` : ""}
         ${hasSenses(w)
           ? `<div class="senses"><div class="tag">뜻이 여러 개예요 · 뜻마다 예문으로 익히세요</div>
               ${w.senses.map((s, i) => `<div class="ex"><div><b class="sn">${i + 1}</b> <b>${esc(s.m)}</b></div><div>${showEx(s.en)}</div><div class="muted">${esc(s.ko)}</div></div>`).join("")}</div>`
           : w.examples.map((e) => `<div class="ex"><div>${showEx(e.en)}</div><div class="muted">${esc(e.ko)}</div></div>`).join("")}
-      </div>
+      </div>`;
+}
+
+function card(w, label, isReview = false) {
+  return new Promise((resolve) => {
+    screen(`
+      <div class="bar"><span>${label}</span></div>
+      ${wordCardHtml(w, { badge: !isReview && isRelearn(w.id) ? ` <span class="badge">다시 배우기 · 예전에 외운 단어</span>` : "", ctx: contextOf(w) })}
       <button class="btn primary big" id="ok">${isReview ? "다시 외웠어요" : "외웠어요"}</button>`);
     speak(w.word);
     tap("#say", () => speak(w.word));
