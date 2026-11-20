@@ -203,7 +203,7 @@ function home() {
   const s = S.set;
   const sum = s.summary;
   // On a catch-up day, reviews belong to today's screen.
-  const reviewsLeft = CATCHUP ? 0 : s.review_ids.filter((id) => !sum.reviewsDone.includes(id)).length;
+  const reviewsLeft = CATCHUP ? 0 : s.review_ids.filter((id) => !sum.reviewsDone.includes(id)).length + (sum.reviewPos?.retry?.length ? 1 : 0);
   const groupsLeft = s.word_ids.filter((id) => !sum.wordsDone.includes(id)).length;
   const wordsLeft = groupsLeft || (s.word_ids.length && !sum.finalDone ? 1 : 0); // final check still to do
   const readLeft = s.passage_ids.filter((id) => !sum.readingDone.find((r) => r.id === id)).length;
@@ -407,23 +407,96 @@ function resultLine() {
 // ───────────── review (old words) ─────────────
 async function review() {
   const sum = S.set.summary;
-  const queue = shuffle(S.set.review_ids.filter((id) => !sum.reviewsDone.includes(id)));
-  for (let i = 0; i < queue.length; i++) {
-    const w = S.wordById[queue[i]];
-    const row = S.progressById[w.id];
-    const kind = reviewStage(row);
-    const t0 = Date.now();
-    const ok = await ask(kind, w, `복습 ${i + 1} / ${queue.length}`, S.words);
-    const ms = S.lastMs ?? Date.now() - t0;
-    const next = afterReview(row, ok, ms, kind, DAY);
-    S.progressById[w.id] = next;
-    await db.saveProgress([next]);
-    await db.logEvents([{ day: DAY, kind: "review", stage: kind, word_id: w.id, correct: ok, ms }]);
-    if (!ok) await card(w, "다시 익히기", true);
-    sum.reviewsDone.push(w.id);
-    await saveSet();
-  }
+  await reviewInGroups({
+    ids: S.set.review_ids.filter((id) => S.wordById[id] && S.progressById[id]),
+    done: sum.reviewsDone,
+    posKey: "reviewPos",
+    title: "복습",
+    remember: afterReview,
+  });
   home();
+}
+
+const REVIEW_GROUP = 10;
+const RETRY_MAX = 2; // practice retries per missed word within its group
+
+/**
+ * Reviews in groups of 10. Each word's first answer in a group updates its memory record
+ * (a miss shows its card again). Then, still inside the group, the missed words come back as
+ * practice: spaced out, at most twice each, never the same word twice in a row. Practice
+ * answers don't change the memory record (they are logged as non-first-try drills).
+ * sum[posKey] = { batch, retry, missed } keeps the place if the student leaves midway.
+ */
+async function reviewInGroups({ ids, done, posKey, title, remember }) {
+  const sum = S.set.summary;
+  const pos = sum[posKey];
+  const notDone = (id) => !done.includes(id);
+  let rest = shuffle(ids.filter(notDone));
+  const totalGroups = () => Math.ceil(ids.length / REVIEW_GROUP);
+  // Resume an unfinished group first.
+  if (pos?.batch?.length && pos.batch.every((id) => S.wordById[id])) {
+    rest = [...pos.batch.filter(notDone), ...rest.filter((id) => !pos.batch.includes(id))];
+  }
+  let resume = pos;
+  while (rest.length || resume?.retry?.length) {
+    const batch = resume?.batch?.length ? resume.batch : rest.slice(0, REVIEW_GROUP);
+    // Words finished in earlier groups decide this group's number.
+    const doneBefore = ids.filter((id) => !notDone(id) && !batch.includes(id)).length;
+    const groupNo = Math.floor(doneBefore / REVIEW_GROUP) + 1;
+    let retry = resume?.retry ? [...resume.retry] : [];
+    const missed = resume?.missed ? { ...resume.missed } : {};
+    resume = null;
+    const save = () => { sum[posKey] = { batch, retry, missed }; return saveSet(); };
+    save();
+    // First pass: memory record updated here.
+    const first = batch.filter(notDone);
+    for (let i = 0; i < first.length; i++) {
+      const w = S.wordById[first[i]];
+      const row = S.progressById[w.id];
+      const kind = reviewStage(row);
+      const t0 = Date.now();
+      const label = `${title} ${groupNo}/${totalGroups()}묶음 · ${batch.length - first.length + i + 1}/${batch.length}`;
+      const ok = await ask(kind, w, label, S.words);
+      const ms = S.lastMs ?? Date.now() - t0;
+      const next = remember(row, ok, ms, kind, DAY);
+      S.progressById[w.id] = next;
+      await db.saveProgress([next]);
+      await db.logEvents([{ day: DAY, kind: "review", stage: kind, word_id: w.id, correct: ok, ms }]);
+      if (!ok) {
+        await card(w, "다시 익히기", true);
+        retry.push(w.id);
+        missed[w.id] = 0;
+      }
+      done.push(w.id);
+      await save();
+    }
+    // Practice the group's missed words before moving on.
+    if (retry.length) {
+      await intro(`${title} ${groupNo}묶음 · 틀린 단어 다시`, `이 묶음에서 틀린 ${retry.length}단어를 한 번 더 확인해요.`);
+    }
+    let last = null;
+    while (retry.length) {
+      // Never the same word twice in a row: if it's the only one left right after itself, stop.
+      if (retry[0] === last && retry.length === 1) { retry = []; break; }
+      if (retry[0] === last) retry.push(retry.shift());
+      const id = retry.shift();
+      const w = S.wordById[id];
+      const kind = reviewStage(S.progressById[id]);
+      const t0 = Date.now();
+      const ok = await ask(kind, w, `${title} ${groupNo}묶음 · 틀린 단어 다시`, S.words);
+      await db.logEvents([{ day: DAY, kind: "drill", stage: `retry:${kind}`, word_id: id, correct: ok, first_try: false, ms: S.lastMs ?? Date.now() - t0 }]);
+      last = id;
+      if (!ok) {
+        missed[id] = (missed[id] || 0) + 1;
+        await card(w, "다시 익히기", true);
+        if (missed[id] < RETRY_MAX) retry.push(id); // back of the line
+      }
+      await save();
+    }
+    sum[posKey] = null;
+    await saveSet();
+    rest = rest.filter((id) => !batch.includes(id) && notDone(id));
+  }
 }
 
 // ───────────── extra review (optional, not-yet-due words) ─────────────
@@ -440,22 +513,9 @@ function extraCandidates() {
 
 async function extraReview() {
   const sum = S.set.summary;
-  const queue = extraCandidates().slice(0, EXTRA_BATCH).map((p) => p.word_id);
-  for (let i = 0; i < queue.length; i++) {
-    const w = S.wordById[queue[i]];
-    const row = S.progressById[w.id];
-    const kind = reviewStage(row);
-    const t0 = Date.now();
-    const ok = await ask(kind, w, `더 복습하기 ${i + 1} / ${queue.length}`, S.words);
-    const ms = S.lastMs ?? Date.now() - t0;
-    const next = afterExtraReview(row, ok, ms, kind, DAY);
-    S.progressById[w.id] = next;
-    await db.saveProgress([next]);
-    await db.logEvents([{ day: DAY, kind: "review", stage: kind, word_id: w.id, correct: ok, ms }]);
-    if (!ok) await card(w, "다시 익히기", true);
-    (sum.extraDone ||= []).push(w.id);
-    await saveSet();
-  }
+  // One group of 10 (or the unfinished one, if the student left midway).
+  const ids = sum.extraPos?.batch?.length ? sum.extraPos.batch : extraCandidates().slice(0, EXTRA_BATCH).map((p) => p.word_id);
+  await reviewInGroups({ ids, done: (sum.extraDone ||= []), posKey: "extraPos", title: "더 복습하기", remember: afterExtraReview });
   home();
 }
 
@@ -766,16 +826,25 @@ async function vocab() {
         }
         const t0 = Date.now();
         const ok = await ask(st.key, w, label, todays, senseIdx === undefined ? undefined : Number(senseIdx));
-        await db.logEvents([{ day: DAY, kind: "drill", stage: st.key, word_id: w.id, correct: ok, first_try: !tried.has(item), ms: S.lastMs ?? Date.now() - t0 }]);
+        const partial = ok && S.lastPartial; // "헷갈려요": half known
+        await db.logEvents([{
+          day: DAY, kind: "drill", stage: st.key, word_id: w.id, correct: ok, first_try: !tried.has(item), ms: S.lastMs ?? Date.now() - t0,
+          ...(partial ? { answer: "partial" } : {}),
+        }]);
         queue.shift();
         tried.add(item);
-        if (ok) done++;
+        if (partial && !missed[item] && queue.length) {
+          // Half known: one more look later in this stage (back half of what's left), then done.
+          missed[item] = "half";
+          const lo = Math.min(queue.length, Math.max(3, Math.ceil(queue.length / 2)));
+          queue.splice(lo + Math.floor(Math.random() * (queue.length - lo + 1)), 0, item);
+        } else if (ok) done++;
         else {
           // Missed: retry later, spaced out so one hard word doesn't keep coming back.
           //   1st miss → somewhere in the back half of what's left (at least 3 questions away),
           //   2nd miss → the very end, 3rd miss → move on (the final check and reviews bring it back).
           // Never the same question twice in a row: if nothing else is left, move on too.
-          const n = (missed[item] = (missed[item] || 0) + 1);
+          const n = (missed[item] = (typeof missed[item] === "number" ? missed[item] : 0) + 1);
           if (n >= 3 || !queue.length) done++;
           else if (n === 2) queue.push(item);
           else {
@@ -1000,6 +1069,7 @@ function ask(kind, w, label, pool, senseIdx) {
   window.__quiz = { kind, id: w.id, word: w.word, senseIdx }; // test hook for automated walkthroughs
   const shown = Date.now();
   S.lastMs = null;
+  S.lastPartial = false; // set by the recall question's "헷갈려요"
   const answered = () => (S.lastMs = Date.now() - shown); // answer time, without feedback time
   return new Promise((resolve) => {
     let prompt = "", options = [], answer = "", mode = "choice", onShow = null;
@@ -1096,16 +1166,20 @@ function ask(kind, w, label, pool, senseIdx) {
         <div class="bar"><span>${label}</span></div>
         <div class="card q">
           <div class="q-word">${esc(w.word)} <button class="icon" id="say" aria-label="발음 듣기">🔊</button></div>
-          <div class="muted">뜻을 소리 내어 말해 보고 확인하세요</div>
+          <div class="muted">뜻을 먼저 떠올려 보고 확인하세요</div>
           <div id="ans" class="ko hidden">
             <div class="meaning">${esc(w.meaning)}</div>
             ${w.root ? `<div class="root small">${esc(w.root)}</div>` : ""}
           </div>
         </div>
         <button class="btn big" id="reveal">뜻 확인</button>
-        <div id="judge" class="row hidden">
-          <button class="btn good" id="yes">떠올렸어요</button>
-          <button class="btn bad" id="no">몰랐어요</button>
+        <div id="judge" class="hidden">
+          <div class="muted small center">얼마나 알고 있었나요?</div>
+          <div class="row judge3">
+            <button class="btn good" id="yes">확실히 알아요<span>뜻이 바로 떠올랐어요</span></button>
+            <button class="btn mid" id="half">헷갈려요<span>대충 알았어요 · 한 번 더</span></button>
+            <button class="btn bad" id="no">몰라요<span>처음 보는 것 같아요</span></button>
+          </div>
         </div>`);
       speak(w.word);
       tap("#say", () => speak(w.word));
@@ -1116,6 +1190,8 @@ function ask(kind, w, label, pool, senseIdx) {
         $app.querySelector("#judge").classList.remove("hidden");
       });
       tap("#yes", () => resolve(true));
+      // "Half known": counts as known for now, but the caller asks it once more later.
+      tap("#half", () => { S.lastPartial = true; resolve(true); });
       tap("#no", () => resolve(false)); // the meaning is already on screen; it comes back later
     } else if (mode === "usage") {
       // Up to three sentences that use this word correctly (its examples, its sense examples,
