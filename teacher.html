@@ -111,6 +111,10 @@
     .class-sheet .pc-a { margin: 0 0 16px; padding-bottom: 12px; border-bottom: 1px solid #ccc; font-size: 14px; line-height: 1.7; break-inside: avoid; }
     .class-sheet .pc-expl { margin-top: 4px; }
     @media print { .class-sheet .pw-grid { grid-template-columns: repeat(3, 1fr); } }
+    /* student's analysis PDF pages in the class handout */
+    .class-sheet .an-page { page-break-before: always; break-before: page; }
+    .class-sheet .an-img { display: block; width: 100%; height: auto; margin: 0 0 10px; border: 1px solid #ccc; break-inside: avoid; page-break-inside: avoid; }
+    @media print { .class-sheet .an-img { max-height: 25.5cm; width: auto; max-width: 100%; margin: 0 auto 0; border: none; page-break-after: always; } }
     /* grammar lesson (어법 수업) in the class handout */
     .class-sheet .gl-page { page-break-before: always; break-before: page; }
     .class-sheet .gl { margin: 6px 0 20px; }
