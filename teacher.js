@@ -673,46 +673,33 @@ function printClass(day) {
   }
 }
 
-// pdf.js (cdnjs) turns each page of the student's PDF into an image the print sheet can hold.
-const PDFJS = "https://cdnjs.cloudflare.com/ajax/libs/pdf.js/3.11.174/";
-let pdfjsReady = null;
-function loadPdfJs() {
-  pdfjsReady ||= new Promise((resolve, reject) => {
-    const s = document.createElement("script");
-    s.src = PDFJS + "pdf.min.js";
-    s.onload = () => {
-      window.pdfjsLib.GlobalWorkerOptions.workerSrc = PDFJS + "pdf.worker.min.js";
-      resolve(window.pdfjsLib);
-    };
-    s.onerror = () => { pdfjsReady = null; reject(new Error("pdf.js를 불러오지 못했어요")); };
-    document.head.appendChild(s);
-  });
-  return pdfjsReady;
-}
+// MuPDF (WebAssembly, jsDelivr) turns each page of the student's PDF into an image the print
+// sheet can hold. (pdf.js can't draw the Korean fonts iPad Safari embeds; MuPDF can.)
+// Loaded only when a handout has a student PDF.
+const MUPDF = "https://cdn.jsdelivr.net/npm/mupdf@1.27.0/dist/mupdf.js";
+let mupdfReady = null;
+const loadMuPdf = () => (mupdfReady ||= import(MUPDF).catch((e) => { mupdfReady = null; throw new Error("PDF 엔진을 불러오지 못했어요"); }));
 
 async function renderAnalysisPages(path, box) {
   const status = (msg) => (box.innerHTML = `<p class="pg">${esc(msg)}</p>`);
   try {
     const blob = await db.analysisFile(path);
     if (!blob) return status("로컬 테스트 모드에서는 제출 파일이 없어요.");
-    const [pdfjs, data] = await Promise.all([loadPdfJs(), blob.arrayBuffer()]);
-    // Korean text in the PDF needs pdf.js's character maps (cMaps) to show up.
-    const pdf = await pdfjs.getDocument({ data, cMapUrl: PDFJS + "cmaps/", cMapPacked: true, standardFontDataUrl: PDFJS + "standard_fonts/" }).promise;
+    const [mupdf, data] = await Promise.all([loadMuPdf(), blob.arrayBuffer()]);
+    const doc = mupdf.Document.openDocument(new Uint8Array(data), "application/pdf");
+    const n = doc.countPages();
     const imgs = [];
-    for (let i = 1; i <= pdf.numPages; i++) {
-      const page = await pdf.getPage(i);
-      const base = page.getViewport({ scale: 1 });
-      const viewport = page.getViewport({ scale: Math.min(3, 1600 / base.width) }); // sharp enough to print
-      const canvas = document.createElement("canvas");
-      canvas.width = viewport.width;
-      canvas.height = viewport.height;
-      const ctx = canvas.getContext("2d");
-      ctx.fillStyle = "#fff";
-      ctx.fillRect(0, 0, canvas.width, canvas.height);
-      await page.render({ canvasContext: ctx, viewport }).promise;
-      imgs.push(`<img class="an-img" alt="학생 분석 ${i}쪽" src="${canvas.toDataURL("image/jpeg", 0.88)}">`);
+    for (let i = 0; i < n; i++) {
+      const page = doc.loadPage(i);
+      const [x0, , x1] = page.getBounds();
+      const s = Math.min(3, 1600 / (x1 - x0)); // sharp enough to print
+      const pix = page.toPixmap(mupdf.Matrix.scale(s, s), mupdf.ColorSpace.DeviceRGB, false, true);
+      const url = URL.createObjectURL(new Blob([pix.asJPEG(88)], { type: "image/jpeg" }));
+      imgs.push(`<img class="an-img" alt="학생 분석 ${i + 1}쪽" src="${url}">`);
     }
-    box.innerHTML = `<p class="pg">학생 제출본 · ${pdf.numPages}쪽</p>${imgs.join("")}`;
+    box.innerHTML = `<p class="pg">학생 제출본 · ${n}쪽</p>${imgs.join("")}`;
+    // Print only once the images are decoded.
+    await Promise.all([...box.querySelectorAll("img")].map((im) => im.decode().catch(() => {})));
   } catch (e) {
     console.error(e);
     status(`학생 분석 PDF를 넣지 못했어요 (${e.message}). 대시보드의 "PDF 열기"로 따로 볼 수 있어요.`);
