@@ -47,7 +47,8 @@ export function drillScore(attempts) {
     const base = baseStage(a.stage);
     if (!a.first_try || !(base in STAGE_WEIGHT)) continue;
     const w = a.stage.startsWith("final:") ? FINAL_WEIGHT : STAGE_WEIGHT[base];
-    num += w * answerScore(a.stage, a.correct, a.ms);
+    // "헷갈려요" on a recall card is half known.
+    num += w * (a.answer === "partial" ? 0.5 : answerScore(a.stage, a.correct, a.ms));
     den += w;
   }
   return den ? num / den : 0.5;
