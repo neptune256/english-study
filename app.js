@@ -721,9 +721,10 @@ async function vocab() {
     for (let si = startStage; si < STAGES.length; si++) {
       const st = STAGES[si];
       const resuming = pos && si === startStage;
+      let missed = resuming && pos.missed ? { ...pos.missed } : {}; // item -> misses in this stage
       const save = (queue, tried, done) => {
         // queue holds item strings ("wordId" or "wordId#meaning"), saved as they are
-        sum.vocabPos = { groupIds: group.map((w) => w.id), stage: st.key, queue: [...queue], tried: [...tried], done };
+        sum.vocabPos = { groupIds: group.map((w) => w.id), stage: st.key, queue: [...queue], tried: [...tried], done, missed };
         return saveSet();
       };
       if (st.key === "match") {
@@ -750,7 +751,7 @@ async function vocab() {
       const queue = valid ? [...pos.queue] : shuffle(items);
       const tried = new Set(valid ? pos.tried || [] : []);
       let done = valid ? Math.min(pos.done || 0, items.length - queue.length) : 0;
-      if (!valid) save(queue, tried, done);
+      if (!valid) { missed = {}; save(queue, tried, done); }
       while (queue.length) {
         const item = queue[0]; // stays first until answered, so a resumed session asks it again
         const [wid, senseIdx] = item.split("#");
@@ -770,10 +771,17 @@ async function vocab() {
         tried.add(item);
         if (ok) done++;
         else {
-          // Missed: back into the line at a random later spot (at least 2 questions away when
-          // possible), so the retry order isn't the same as the first pass.
-          const lo = Math.min(2, queue.length);
-          queue.splice(lo + Math.floor(Math.random() * (queue.length - lo + 1)), 0, item);
+          // Missed: retry later, spaced out so one hard word doesn't keep coming back.
+          //   1st miss → somewhere in the back half of what's left (at least 3 questions away),
+          //   2nd miss → the very end, 3rd miss → move on (the final check and reviews bring it back).
+          // Never the same question twice in a row: if nothing else is left, move on too.
+          const n = (missed[item] = (missed[item] || 0) + 1);
+          if (n >= 3 || !queue.length) done++;
+          else if (n === 2) queue.push(item);
+          else {
+            const lo = Math.min(queue.length, Math.max(3, Math.ceil(queue.length / 2)));
+            queue.splice(lo + Math.floor(Math.random() * (queue.length - lo + 1)), 0, item);
+          }
         }
         save(queue, tried, done);
       }
