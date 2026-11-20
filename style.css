@@ -149,6 +149,23 @@ body.printing #app { display: none; }
 .why li.o .mk { color: var(--good); }
 .why li.x { background: var(--bad-soft); }
 .why li.x .mk { color: var(--bad); }
+/* word book */
+.wb-open { margin-top: 18px; display: flex; justify-content: center; align-items: baseline; gap: 8px; flex-wrap: wrap; }
+.wb-tabs { display: grid; grid-template-columns: 1fr 1fr; gap: 8px; margin-bottom: 10px; }
+.wb-tab { font: inherit; font-size: 16px; padding: 10px; border-radius: 12px; border: 1.5px solid var(--line); background: var(--card); color: var(--text); cursor: pointer; }
+.wb-tab.on { border-color: var(--accent); background: var(--accent-soft); font-weight: 700; }
+.wb-search { width: 100%; font: inherit; font-size: 17px; padding: 10px 14px; border-radius: 12px; border: 1.5px solid var(--line); background: var(--card); color: var(--text); margin-bottom: 10px; }
+.wb-list { display: grid; gap: 6px; }
+.wb-day { font-size: 14px; font-weight: 700; color: var(--muted); margin: 10px 2px 0; }
+.wb-row { font: inherit; display: flex; align-items: baseline; gap: 10px; text-align: left; background: var(--card); color: var(--text); border: 1px solid var(--line); border-radius: 10px; padding: 10px 12px; cursor: pointer; min-width: 0; }
+.wb-w { font-weight: 700; flex: none; }
+.wb-m { color: var(--muted); font-size: 15px; flex: 1; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.wb-lv { flex: none; font-size: 12px; padding: 1px 8px; border-radius: 99px; background: var(--line); color: var(--muted); }
+.wb-lv.lv-fading { background: var(--bad-soft); color: var(--bad); }
+.wb-lv.lv-due { background: #fbefd9; color: #a8660e; }
+.wb-lv.lv-fresh { background: var(--accent-soft); color: var(--accent); }
+.wb-lv.lv-solid, .wb-lv.lv-mastered { background: var(--good-soft); color: var(--good); }
+.btn:disabled { opacity: 0.4; cursor: default; }
 .row-line { display: flex; justify-content: space-between; padding: 4px 0; border-bottom: 1px solid var(--line); }
 .row-line:last-child { border-bottom: none; }
 .syns { margin: 4px 0; }
