@@ -122,7 +122,7 @@ function dayWork(day) {
   const s = d.summary || {};
   const ev = D.events.filter((e) => e.day === day);
   const read = s.readingDone || [];
-  const needsAnalysis = d.passage_ids.some((id) => D.passageById[id]?.qtype !== GRAMMAR);
+  const needsAnalysis = d.passage_ids.some((id) => D.passageById[id]); // fixed to the day's 어법 question
   const parts = [];
   if (d.review_ids.length) {
     const n = new Set(s.reviewsDone || []).size;
