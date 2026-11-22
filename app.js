@@ -888,13 +888,11 @@ async function vocab() {
           queue.splice(lo + Math.floor(Math.random() * (queue.length - lo + 1)), 0, item);
         } else if (ok) done++;
         else {
-          // Missed: retry later, spaced out so one hard word doesn't keep coming back.
+          // Missed: it comes back until it's answered right (a stage never drops a word).
           //   1st miss → somewhere in the back half of what's left (at least 3 questions away),
-          //   2nd miss → the very end, 3rd miss → move on (the final check and reviews bring it back).
-          // Never the same question twice in a row: if nothing else is left, move on too.
+          //   later misses → the end of the line. If it's the only one left, it's asked again.
           const n = (missed[item] = (typeof missed[item] === "number" ? missed[item] : 0) + 1);
-          if (n >= 3 || !queue.length) done++;
-          else if (n === 2) queue.push(item);
+          if (n >= 2 || !queue.length) queue.push(item);
           else {
             const lo = Math.min(queue.length, Math.max(3, Math.ceil(queue.length / 2)));
             queue.splice(lo + Math.floor(Math.random() * (queue.length - lo + 1)), 0, item);
@@ -1221,13 +1219,9 @@ function ask(kind, w, label, pool, senseIdx) {
           </div>
         </div>
         <button class="btn big" id="reveal">뜻 확인</button>
-        <div id="judge" class="hidden">
-          <div class="muted small center">얼마나 알고 있었나요?</div>
-          <div class="row judge3">
-            <button class="btn good" id="yes">확실히 알아요<span>뜻이 바로 떠올랐어요</span></button>
-            <button class="btn mid" id="half">헷갈려요<span>대충 알았어요 · 한 번 더</span></button>
-            <button class="btn bad" id="no">몰라요<span>처음 보는 것 같아요</span></button>
-          </div>
+        <div id="judge" class="row hidden">
+          <button class="btn good" id="yes">알았어요</button>
+          <button class="btn bad" id="no">몰랐어요</button>
         </div>`);
       speak(w.word);
       tap("#say", () => speak(w.word));
@@ -1238,8 +1232,6 @@ function ask(kind, w, label, pool, senseIdx) {
         $app.querySelector("#judge").classList.remove("hidden");
       });
       tap("#yes", () => resolve(true));
-      // "Half known": counts as known for now, but the caller asks it once more later.
-      tap("#half", () => { S.lastPartial = true; resolve(true); });
       tap("#no", () => resolve(false)); // the meaning is already on screen; it comes back later
     } else if (mode === "usage") {
       // Up to three sentences that use this word correctly (its examples, its sense examples,
