@@ -151,7 +151,7 @@ function leftover(d) {
   const words = ids.filter((id) => !(sum.wordsDone || []).includes(id)).length;
   const final = ids.length > 0 && !sum.finalDone;
   const reading = d.passage_ids.filter((id) => !(sum.readingDone || []).find((r) => r.id === id)).length;
-  const analysis = d.passage_ids.some((id) => S.passageById[id] && !isGrammar(id)) && !sum.analysis;
+  const analysis = hasAnalysis(d) && !sum.analysis;
   return { words, final, reading, analysis, any: words > 0 || final || reading > 0 || analysis };
 }
 /** Panel: past days with unfinished work, newest first. */
@@ -212,7 +212,7 @@ function home() {
       <span class="num">${done ? "✓" : n}</span>
       <div><div class="step-title">${title}</div><div class="muted small">${detail}</div></div>
     </li>`;
-  const analysisLeft = s.passage_ids.some((id) => !isGrammar(id)) && !sum.analysis ? 1 : 0;
+  const analysisLeft = hasAnalysis(s) && !sum.analysis ? 1 : 0;
   // Weekend: the weekly word test comes right after the review, until it is finished.
   const testOn = !CATCHUP && testOpen();
   const T = testOn ? testHost()?.summary.weekly : null; // started, not finished
@@ -231,7 +231,7 @@ function home() {
       ${testOn ? step(++n, "주간 테스트", `이번 주 단어 ${T?.ids.length || weeklyPick().length}문제 · 객관식${T?.results.length ? ` · ${T.results.length}문제 풀었음` : ""} · ${testWeek() === DAY ? "내일(일요일)까지" : "오늘까지"}`, false, next === "test") : ""}
       ${step(++n, "단어 외우기", groupsLeft ? `${wordMix(s)} · 남은 단어 ${groupsLeft}개 · 마지막에 최종 점검` : !s.word_ids.length ? "오늘은 새 단어가 없어요 (지난 지문 복습일)" : sum.finalDone ? `${wordMix(s)} 완료` : "최종 점검만 남았어요", !wordsLeft, next === "vocab")}
       ${step(++n, "독해 + 어법", `${readingSummary(s)} · 남은 문제 ${readLeft}개`, !readLeft, next === "reading")}
-      ${step(++n, "지문 분석", sum.analysis ? `제출 완료 · ${esc(S.passageById[sum.analysis.passage_id]?.source || "")}` : `${CATCHUP ? "이날" : "오늘"} 지문 하나를 분석해서 PDF로 제출`, !analysisLeft, next === "analysis")}
+      ${step(++n, "지문 분석", sum.analysis ? `제출 완료 · ${esc(S.passageById[sum.analysis.passage_id]?.source || "")}` : analysisTarget(s) ? `${CATCHUP ? "이날" : "오늘"} 어법 문제를 분석해서 PDF로 제출` : `${CATCHUP ? "이날" : "오늘"} 지문 하나를 분석해서 PDF로 제출`, !analysisLeft, next === "analysis")}
     </ol>
     ${
       next
@@ -259,7 +259,22 @@ const ANALYSIS_GUIDE = [
   "정답의 근거가 되는 문장 표시하고, 내가 고른 답이 왜 맞았는지/틀렸는지 적기",
 ];
 
+// The day's analysis is fixed to its 어법 question. (Only if a day has none, the student picks a
+// reading passage instead.)
+const GRAMMAR_GUIDE = [
+  "밑줄 ①~⑤ 옆에 각각 무엇을 묻는 문법인지 적기 (예: 수 일치, 분사, 관계사, 동사 자리, 병렬)",
+  "밑줄이 있는 문장마다 주어·동사에 표시하고, 수식어(전치사구·관계절·삽입구)는 괄호로 묶기",
+  "틀린 밑줄을 찾아 바르게 고쳐 쓰고, 왜 틀렸는지 한 줄로 쓰기",
+  "나머지 네 개가 맞는 이유를 한 줄씩 쓰기",
+  "어려운 문장 1~2개 끊어 읽기(직독직해), 모르는 단어 정리",
+];
+const analysisTarget = (set) => set.passage_ids.find((id) => isGrammar(id) && S.passageById[id]) || null;
+/** Does this day have something to analyze? */
+const hasAnalysis = (set) => set.passage_ids.some((id) => S.passageById[id]);
+
 function analysis() {
+  const target = analysisTarget(S.set);
+  if (target) return analysisFor(S.passageById[target], { fixed: true });
   const sum = S.set.summary;
   const ids = S.set.passage_ids.filter((id) => !isGrammar(id));
   const wrong = new Set(sum.readingDone.filter((r) => !r.correct).map((r) => r.id));
@@ -281,12 +296,14 @@ function analysis() {
   tap(".pick", (el) => analysisFor(S.passageById[el.dataset.id]));
 }
 
-function analysisFor(p) {
+function analysisFor(p, { fixed = false } = {}) {
+  const guide = isGrammar(p.id) ? GRAMMAR_GUIDE : ANALYSIS_GUIDE;
   screen(`
     <div class="bar"><span>지문 분석 · ${esc(p.qtype)}</span><span class="muted small">${esc(p.source)}</span></div>
     <div class="card">
-      <h2>이렇게 분석해 보세요</h2>
-      <ol class="guide">${ANALYSIS_GUIDE.map((g) => `<li>${esc(g)}</li>`).join("")}</ol>
+      <h2>${isGrammar(p.id) ? "오늘의 어법 문제를 분석해 보세요" : "이렇게 분석해 보세요"}</h2>
+      ${isGrammar(p.id) ? `<p class="muted small">독해에서 푼 어법 문제예요. 아래 순서대로 분석해 주세요.</p>` : ""}
+      <ol class="guide">${guide.map((g) => `<li>${esc(g)}</li>`).join("")}</ol>
       <p class="muted small">① 아래 "지문 열기"로 지문을 PDF로 저장하거나 인쇄하고 ② 굿노트·노트 앱이나 종이에 분석한 뒤 ③ PDF로 내보내서(사진은 PDF로 변환) 제출하세요.</p>
       <button class="btn big" id="print">지문 열기 (PDF 저장·인쇄)</button>
     </div>
@@ -299,8 +316,8 @@ function analysisFor(p) {
       <button class="btn primary big" id="send" disabled>제출하기</button>
       <div id="fb"></div>
     </div>
-    <button class="btn big" id="back">다른 지문 고르기</button>`);
-  tap("#back", () => analysis());
+    <button class="btn big" id="back">${fixed ? "나중에 할게요" : "다른 지문 고르기"}</button>`);
+  tap("#back", () => (fixed ? home() : analysis()));
   tap("#print", () => printPassage(p));
   const input = $app.querySelector("#file");
   input.addEventListener("change", () => {
@@ -353,7 +370,7 @@ function printPassage(p) {
     ${p.box ? `<div class="given">${esc(p.box).replace(/\n/g, "<br>")}</div>` : ""}
     <div class="pbody">${body}</div>
     ${p.glossary.length ? `<div class="pg">${p.glossary.map((g) => "* " + esc(g)).join("&nbsp;&nbsp;")}</div>` : ""}
-    <ol class="pc">${q.choices.map((c) => `<li>${esc(c)}</li>`).join("")}</ol>
+    ${q.choices.every((c, i) => c.trim() === "①②③④⑤"[i]) ? "" : `<ol class="pc">${q.choices.map((c) => `<li>${esc(c)}</li>`).join("")}</ol>`}
     <div class="plines"><b>분석 메모</b>${"<div></div>".repeat(8)}</div>`;
   document.body.appendChild(sheet);
   document.body.classList.add("printing");
