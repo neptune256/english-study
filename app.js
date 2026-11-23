@@ -1583,7 +1583,11 @@ async function finishDay() {
     wordFirstTry: evs.filter((e) => e.correct).length,
     wordTotal: evs.length,
   };
+  // Re-read the state first: the teacher may have changed or locked the level from the dashboard
+  // while this page was open. A locked passage level stays where the teacher set it.
+  S.state = (await db.state()) || S.state;
   const lv = nextLevels(S.state, stats);
+  if (S.state.level_locked) lv.level = S.state.level;
   sum.stats = { ...stats, levelAfter: lv.level, wordLevelAfter: lv.word_level };
   S.set.reading_done_at = new Date().toISOString();
   S.state = { ...S.state, ...lv };

@@ -129,6 +129,25 @@
     .class-sheet .pc-a { margin: 0 0 16px; padding-bottom: 12px; border-bottom: 1px solid #ccc; font-size: 14px; line-height: 1.7; break-inside: avoid; }
     .class-sheet .pc-expl { margin-top: 4px; }
     @media print { .class-sheet .pw-grid { grid-template-columns: repeat(3, 1fr); } }
+    /* passage difficulty control */
+    .kpi.lv-ctl { grid-column: span 2; border-color: var(--accent); }
+    .lv-ctl .v { display: flex; align-items: center; gap: 10px; }
+    .lv-btn { font: inherit; font-size: 22px; line-height: 1; width: 36px; height: 36px; border-radius: 50%; border: 1.5px solid var(--line); background: var(--bg); color: var(--text); cursor: pointer; }
+    .lv-btn:hover:not(:disabled) { border-color: var(--accent); color: var(--accent); }
+    .lv-btn:disabled { opacity: 0.35; cursor: default; }
+    .lv-lock { display: flex; align-items: center; gap: 4px; cursor: pointer; margin-top: 4px; }
+    #lv-msg:empty { display: none; }
+    /* foldable dashboard sections */
+    details.sec { margin: 0 0 4px; }
+    details.sec > summary { list-style: none; cursor: pointer; display: flex; align-items: center; gap: 8px; border-bottom: 1px solid var(--line); padding: 2px 0; }
+    details.sec > summary::-webkit-details-marker { display: none; }
+    details.sec > summary::before { content: "▸"; font-size: 16px; color: var(--muted); width: 14px; transition: transform 0.15s; }
+    details.sec[open] > summary::before { transform: rotate(90deg); }
+    details.sec > summary h2 { margin: 16px 0 10px; }
+    details.sec > summary:hover h2 { color: var(--accent); }
+    details.sec[open] > summary { margin-bottom: 10px; }
+    .sec-tools { display: flex; justify-content: flex-end; gap: 8px; margin: 4px 0 0; }
+    .sec-tools .btn { min-height: 34px; padding: 6px 12px; font-size: 14px; }
     /* student's analysis PDF pages in the class handout */
     .class-sheet .an-page { page-break-before: always; break-before: page; }
     .class-sheet .an-img { display: block; width: 100%; height: auto; margin: 0 0 10px; border: 1px solid #ccc; break-inside: avoid; page-break-inside: avoid; }

@@ -58,20 +58,26 @@ function render() {
   $app.innerHTML = `
     <header class="top"><h1>학습 대시보드</h1><span class="small"><a href="math-teacher.html${location.search}" class="muted">수학 대시보드 →</a> · <a href="index.html" class="muted">학생 화면 →</a></span></header>
     ${REMOTE ? "" : `<p class="note">로컬 테스트 모드: 이 브라우저에 저장된 기록만 보입니다.</p>`}
-    ${homeworkSection()}
-    <h2>주간 테스트 <span class="muted small">토·일 · 지난주에 배운 단어 (약한 단어 전부 + 나머지 일부) · 객관식</span></h2>
-    <div id="weekly">${weeklySection()}</div>
     ${daysLeft <= 5 ? `<div class="alert">⚠ 새 지문이 <b>약 ${daysLeft}일분</b> 남았습니다 (예상 소진 ${runout.slice(5).replace("-", "/")}).
       컴퓨터를 켜고 Claude 앱을 열어 두면 저녁 8시 예약 작업이 자동으로 채웁니다.
       바닥나도 앱은 멈추지 않고 예전에 틀린 지문을 다시 냅니다.</div>` : ""}
     <div class="kpis">
-      <div class="kpi"><div class="v">${D.state.level}</div><div class="l">지문 난이도 수준 (1~5)</div></div>
+      <div class="kpi lv-ctl">
+        <div class="v"><button class="lv-btn" data-d="-0.5" ${D.state.level <= 1 ? "disabled" : ""} aria-label="난이도 낮추기">−</button><span>${D.state.level}</span><button class="lv-btn" data-d="0.5" ${D.state.level >= 5 ? "disabled" : ""} aria-label="난이도 높이기">+</button></div>
+        <div class="l">출제 지문 난이도 (1~5)</div>
+        <label class="l lv-lock"><input type="checkbox" id="lv-lock" ${D.state.level_locked ? "checked" : ""}/> 고정 <span class="muted">${D.state.level_locked ? "· 자동 조절 꺼짐" : "· 꺼 두면 정답률로 자동 조절"}</span></label>
+        <div class="l muted" id="lv-msg"></div>
+      </div>
       <div class="kpi"><div class="v">${D.state.word_level}</div><div class="l">단어 수준 (1~5)</div></div>
       <div class="kpi"><div class="v">${streak()}일</div><div class="l">연속 학습</div></div>
       <div class="kpi"><div class="v">${learned}</div><div class="l">외운 단어 · 완전 암기 ${mastered}</div></div>
       <div class="kpi"><div class="v">${learned ? Math.round(avgR * 100) + "%" : "–"}</div><div class="l">외운 단어 평균 기억 확률</div></div>
       <div class="kpi"><div class="v">${due}</div><div class="l">오늘까지 복습할 단어</div></div>
     </div>
+    <div class="sec-tools"><button class="btn" id="sec-open">모두 펼치기</button><button class="btn" id="sec-close">모두 접기</button></div>
+    ${homeworkSection()}
+    <h2>주간 테스트 <span class="muted small">토·일 · 지난주에 배운 단어 (약한 단어 전부 + 나머지 일부) · 객관식</span></h2>
+    <div id="weekly">${weeklySection()}</div>
 
     <h2>지문 창고 <span class="muted small">아직 학생에게 내지 않은 지문 · 매일 독해 ${PASSAGES_PER_DAY}개 + 어법 1개씩 씁니다</span></h2>
     ${stockSection(unused, poolLeft, grammarLeft, daysLeft, runout)}
@@ -90,6 +96,7 @@ function render() {
 
     <h2>지문·정답·풀이 <span class="muted small">(정답은 Claude가 직접 풀어 만든 것입니다. 검증 전 지문은 표시됩니다)</span></h2>
     ${bank()}`;
+  makeSections();
 
   $app.querySelectorAll("tr.click").forEach((tr) =>
     tr.addEventListener("click", () => {
@@ -104,14 +111,79 @@ function render() {
       if (!D.daily.some((d) => d.day === b.dataset.day)) return;
       $app.querySelectorAll("tr.sel").forEach((x) => x.classList.remove("sel"));
       $app.querySelector(`tr.click[data-day="${b.dataset.day}"]`)?.classList.add("sel");
+      const sec = $app.querySelector("#detail")?.closest("details.sec");
+      if (sec) sec.open = true; // the day's detail lives in 날짜별 기록
       showDay(b.dataset.day);
       $app.querySelector("#detail")?.scrollIntoView({ behavior: "smooth", block: "start" });
     })
   );
   bindMastery();
   bindWeekly();
+  bindLevel();
   $app.querySelectorAll(".open-pdf").forEach((b) => b.addEventListener("click", (e) => { e.stopPropagation(); openPdf(b); }));
   if (D.daily.length) showDay(D.daily[0].day);
+}
+
+// ───────────── passage difficulty control ─────────────
+// The planner picks passages closest to state.level. The teacher can move it (0.5 steps) and
+// lock it; when locked, the end-of-day update in the student app leaves the passage level alone.
+let levelMsg = "";
+async function saveLevel(patch) {
+  const prev = D.state;
+  D.state = { ...D.state, ...patch };
+  try {
+    await db.saveState(D.state);
+    levelMsg = "저장했어요 · 내일 내는 지문부터 적용돼요";
+  } catch (e) {
+    D.state = prev;
+    levelMsg = `저장하지 못했어요 (${e.message})`;
+  }
+  render();
+}
+
+function bindLevel() {
+  const msg = $app.querySelector("#lv-msg");
+  if (msg && levelMsg) msg.textContent = levelMsg;
+  levelMsg = "";
+  $app.querySelectorAll(".lv-btn").forEach((b) =>
+    b.addEventListener("click", () => {
+      const level = Math.min(5, Math.max(1, Math.round((D.state.level + Number(b.dataset.d)) * 2) / 2));
+      if (level !== D.state.level) saveLevel({ level });
+    })
+  );
+  $app.querySelector("#lv-lock")?.addEventListener("change", (e) => saveLevel({ level_locked: e.target.checked }));
+}
+
+// ───────────── foldable sections ─────────────
+// Each top-level <h2> and everything after it (until the next <h2>) becomes one <details>
+// section. Click the title to fold/unfold; the choice is remembered in this browser.
+const SEC_KEY = "teacher:sec:";
+const secOpen = (key) => {
+  try { return localStorage.getItem(SEC_KEY + key) !== "0"; } catch { return true; }
+};
+const secRemember = (key, open) => {
+  try { localStorage.setItem(SEC_KEY + key, open ? "1" : "0"); } catch { /* storage blocked: not remembered */ }
+};
+
+function makeSections() {
+  let cur = null;
+  for (const el of [...$app.children]) {
+    if (el.tagName === "H2") {
+      const key = (el.childNodes[0]?.textContent || el.textContent).trim();
+      const d = document.createElement("details");
+      d.className = "sec";
+      d.open = secOpen(key);
+      const s = document.createElement("summary");
+      el.replaceWith(d);
+      s.appendChild(el);
+      d.appendChild(s);
+      d.addEventListener("toggle", () => secRemember(key, d.open));
+      cur = d;
+    } else if (cur) cur.appendChild(el);
+  }
+  const all = (open) => $app.querySelectorAll("details.sec").forEach((d) => (d.open = open));
+  $app.querySelector("#sec-open")?.addEventListener("click", () => all(true));
+  $app.querySelector("#sec-close")?.addEventListener("click", () => all(false));
 }
 
 // ───────────── homework check (did the student do yesterday's / today's work?) ─────────────
