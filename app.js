@@ -257,6 +257,7 @@ const ANALYSIS_GUIDE = [
   "어려운 문장 2개를 골라 끊어 읽기: 주어·동사 표시하고 직독직해",
   "모르는 단어·표현 정리 (오늘 외운 단어는 형광펜)",
   "정답의 근거가 되는 문장 표시하고, 내가 고른 답이 왜 맞았는지/틀렸는지 적기",
+  "지문 전체를 해석해서 아래 '전체 해석' 칸(분석지 2쪽)에 쓰기",
 ];
 
 // The day's analysis is fixed to its 어법 question. (Only if a day has none, the student picks a
@@ -267,6 +268,7 @@ const GRAMMAR_GUIDE = [
   "틀린 밑줄을 찾아 바르게 고쳐 쓰고, 왜 틀렸는지 한 줄로 쓰기",
   "나머지 네 개가 맞는 이유를 한 줄씩 쓰기",
   "어려운 문장 1~2개 끊어 읽기(직독직해), 모르는 단어 정리",
+  "지문 전체를 해석해서 아래 '전체 해석' 칸(분석지 2쪽)에 쓰기",
 ];
 const analysisTarget = (set) => set.passage_ids.find((id) => isGrammar(id) && S.passageById[id]) || null;
 /** Does this day have something to analyze? */
@@ -304,7 +306,7 @@ function analysisFor(p, { fixed = false } = {}) {
       <h2>${isGrammar(p.id) ? "오늘의 어법 문제를 분석해 보세요" : "이렇게 분석해 보세요"}</h2>
       ${isGrammar(p.id) ? `<p class="muted small">독해에서 푼 어법 문제예요. 아래 순서대로 분석해 주세요.</p>` : ""}
       <ol class="guide">${guide.map((g) => `<li>${esc(g)}</li>`).join("")}</ol>
-      <p class="muted small">① 아래 "지문 열기"로 지문을 PDF로 저장하거나 인쇄하고 ② 굿노트·노트 앱이나 종이에 분석한 뒤 ③ PDF로 내보내서(사진은 PDF로 변환) 제출하세요.</p>
+      <p class="muted small">① 아래 "지문 열기"로 지문을 PDF로 저장하거나 인쇄하고 ② 굿노트·노트 앱이나 종이에 분석하고 2쪽 '전체 해석' 칸에 해석까지 쓴 뒤 ③ PDF로 내보내서(사진은 PDF로 변환) 제출하세요.</p>
       <button class="btn big" id="print">지문 열기 (PDF 저장·인쇄)</button>
     </div>
     <div class="card">
@@ -371,7 +373,8 @@ function printPassage(p) {
     <div class="pbody">${body}</div>
     ${p.glossary.length ? `<div class="pg">${p.glossary.map((g) => "* " + esc(g)).join("&nbsp;&nbsp;")}</div>` : ""}
     ${q.choices.every((c, i) => c.trim() === "①②③④⑤"[i]) ? "" : `<ol class="pc">${q.choices.map((c) => `<li>${esc(c)}</li>`).join("")}</ol>`}
-    <div class="plines"><b>분석 메모</b>${"<div></div>".repeat(8)}</div>`;
+    <div class="plines"><b>분석 메모</b>${"<div></div>".repeat(8)}</div>
+    <div class="plines ptrans"><b>전체 해석</b> <span class="pg">지문 전체를 한 문장씩 우리말로 옮겨 쓰세요</span>${"<div></div>".repeat(22)}</div>`;
   document.body.appendChild(sheet);
   document.body.classList.add("printing");
   window.scrollTo(0, 0);

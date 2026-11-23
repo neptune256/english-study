@@ -140,6 +140,7 @@ body.printing #app { display: none; }
 .print-sheet .pc { font-size: 14px; line-height: 1.8; }
 .print-sheet .plines { margin-top: 24px; font-size: 14px; }
 .print-sheet .plines div { height: 34px; border-bottom: 1px solid #ccc; }
+.print-sheet .ptrans { page-break-before: always; break-before: page; }
 @media print {
   body { background: #fff; }
   .no-print { display: none !important; }
